@@ -4,7 +4,7 @@ This is the main endpoint a user would call after the intake wizard.
 """
 import os
 import tempfile
-from fastapi import APIRouter, UploadFile, File, HTTPException
+from fastapi import APIRouter, UploadFile, File, Form, HTTPException
 from uuid import UUID, uuid4
 
 from app.models.domain import PermitSession, SuiteType, SessionStatus
@@ -18,10 +18,10 @@ GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY", "")
 
 @router.post("/pipeline/run")
 async def run_full_pipeline(
-    property_address: str,
-    suite_type: str,
+    property_address: str = Form(...),
+    suite_type: str = Form(...),
     file: UploadFile = File(...),
-    laneway_abutment_length: float = None,
+    laneway_abutment_length: float = Form(None),
 ):
     """
     End-to-end pipeline: accepts a PDF and property details,
