@@ -1,0 +1,16 @@
+fastapi
+uvicorn
+pydantic
+python-multipart
+python-dotenv
+httpx
+PyMuPDF
+pdfplumber
+langchain
+langchain-anthropic
+pgvector
+psycopg2-binary
+qdrant-client
+prefect
+celery
+redis
