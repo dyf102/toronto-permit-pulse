@@ -1,0 +1,24 @@
+services:
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./frontend/src:/app/src
+    environment:
+      - NEXT_PUBLIC_API_URL=http://localhost:8000
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend:/app
+      - /app/venv
+    environment:
+      - ENVIRONMENT=development
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY:-}
