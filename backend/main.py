@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.api.sessions import router as sessions_router
+from app.api.parsing import router as parsing_router
 
 app = FastAPI(
     title="Permit Pulse Toronto API",
@@ -23,6 +24,7 @@ app.add_middleware(
 
 # Mount API routes
 app.include_router(sessions_router)
+app.include_router(parsing_router)
 
 
 @app.get("/")
