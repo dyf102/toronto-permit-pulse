@@ -1,12 +1,16 @@
 import fitz  # PyMuPDF
 import json
 from typing import List
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from google import genai
 from google.genai import types as genai_types
 
-from app.models.domain import ExaminerNoticeExtractionResult, DeficiencyItem
+from app.models.domain import (
+    ExaminerNoticeExtractionResult,
+    DeficiencyItem,
+    DeficiencyCategory,
+)
 
 
 class ExaminerNoticeParserService:
@@ -34,23 +38,41 @@ class ExaminerNoticeParserService:
         """
         raw_text = self.extract_text_from_pdf(pdf_path)
 
-        # Build the Pydantic schema hint for the LLM
-        schema = ExaminerNoticeExtractionResult.model_json_schema()
+        prompt = f"""You are an expert at parsing City of Toronto Building Examiner's Notices.
 
-        prompt = f"""You are an expert municipal zoning and building code AI agent.
-Your task is to parse the raw text of a City of Toronto Examiner's Notice for an architectural permit
-and extract every deficiency item listed.
+Extract every deficiency item from the notice text below.
 
-Respond ONLY with a valid JSON object matching this schema (no markdown fences):
-{json.dumps(schema, indent=2)}
+Return a JSON array (not an object, just an array) of deficiency items. Each item must have:
+- "category": one of exactly: ZONING, OBC, FIRE_ACCESS, TREE_PROTECTION, LANDSCAPING, SERVICING, OTHER
+- "raw_notice_text": the full original text of the deficiency as written in the notice
+- "extracted_action": a concise 1-2 sentence summary of what the applicant must do to resolve it
 
-Categories must be one of: ZONING, OBC, FIRE_ACCESS, TREE_PROTECTION, LANDSCAPING, SERVICING, OTHER
+Rules:
+- Return ONLY the JSON array, no markdown, no code fences, no explanation
+- If a section heading (e.g. "SECTION A — ZONING") contains multiple sub-items (e.g. A-1, A-2), extract each sub-item separately
+- Map section letters to categories: A/Zoning→ZONING, B/OBC/Building Code→OBC, C/Tree→TREE_PROTECTION, D/Fire→FIRE_ACCESS, E/Landscape→LANDSCAPING, F/Servicing→SERVICING
+- If you cannot determine the category, use OTHER
 
-Here is the raw text of the Examiner's Notice:
-<examiner_notice>
+Example output format:
+[
+  {{
+    "category": "ZONING",
+    "raw_notice_text": "A-1 — Maximum Building Height...(full text)...",
+    "extracted_action": "Reduce ridge height from 6.8m to comply with 6.0m maximum, or apply for minor variance."
+  }},
+  {{
+    "category": "OBC",
+    "raw_notice_text": "B-1 — Spatial Separation...(full text)...",
+    "extracted_action": "Remove west wall window or provide fire-rated glazing details for limiting distance compliance."
+  }}
+]
+
+Here is the Examiner's Notice text:
+<notice>
 {raw_text}
-</examiner_notice>
-"""
+</notice>
+
+Return only the JSON array:"""
 
         response = self.client.models.generate_content(
             model=self.model,
@@ -60,20 +82,47 @@ Here is the raw text of the Examiner's Notice:
 
         content = response.text.strip()
 
-        # Strip accidental markdown fences
+        # Strip any accidental markdown fences
         if content.startswith("```"):
             content = content.split("\n", 1)[1].rsplit("```", 1)[0].strip()
 
+        # Sometimes the model wraps in an object, unwrap it
+        if content.startswith("{"):
+            try:
+                obj = json.loads(content)
+                if "items" in obj:
+                    content = json.dumps(obj["items"])
+            except Exception:
+                pass
+
         try:
-            parsed_data = json.loads(content)
-            result = ExaminerNoticeExtractionResult(**parsed_data)
-        except (json.JSONDecodeError, Exception) as e:
-            # Return empty list if parsing fails rather than crashing
+            items_data = json.loads(content)
+            if not isinstance(items_data, list):
+                items_data = []
+        except json.JSONDecodeError:
+            print(f"[parser] JSON decode failed. Raw response:\n{content[:500]}")
             return []
 
-        # Inject session_id and ordering
-        for idx, item in enumerate(result.items):
-            item.session_id = session_id
-            item.order_index = idx + 1
+        result = []
+        for idx, item in enumerate(items_data):
+            try:
+                cat_str = item.get("category", "OTHER").upper()
+                try:
+                    category = DeficiencyCategory(cat_str)
+                except ValueError:
+                    category = DeficiencyCategory.OTHER
 
-        return result.items
+                deficiency = DeficiencyItem(
+                    session_id=session_id,
+                    category=category,
+                    raw_notice_text=item.get("raw_notice_text", ""),
+                    extracted_action=item.get("extracted_action", ""),
+                    order_index=idx + 1,
+                )
+                result.append(deficiency)
+            except Exception as e:
+                print(f"[parser] Skipping item {idx}: {e}")
+                continue
+
+        print(f"[parser] Extracted {len(result)} deficiencies from notice")
+        return result

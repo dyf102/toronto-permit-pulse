@@ -52,7 +52,7 @@ class DeficiencyItem(BaseModel):
     category: DeficiencyCategory
     raw_notice_text: str
     extracted_action: str
-    agent_confidence: float = Field(ge=0.0, le=1.0)
+    agent_confidence: float = Field(default=0.8, ge=0.0, le=1.0)
     order_index: Optional[int] = None
 
 class Citation(BaseModel):
