@@ -4,11 +4,12 @@ Each agent checks a deficiency against a specific regulatory domain
 and produces a structured response with citations.
 """
 import os
+import json
 from typing import List, Optional
 from abc import ABC, abstractmethod
 
-from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain.prompts import ChatPromptTemplate
+from google import genai
+from google.genai import types as genai_types
 from pydantic import BaseModel
 
 from app.models.domain import (
@@ -19,8 +20,6 @@ from app.models.domain import (
     DeficiencyCategory,
 )
 
-
-GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY", "")
 
 
 class AgentResult(BaseModel):
@@ -37,21 +36,25 @@ class BaseValidatorAgent(ABC):
 
     def __init__(self, model: str = "gemini-2.5-flash"):
         self._model = model
-        self._llm = None
+        self._client = None
 
-    @property
-    def llm(self):
-        """Lazy initialization — only create client when needed."""
-        if self._llm is None:
+    def _get_client(self):
+        """Lazy initialization — only configure SDK when needed."""
+        if self._client is None:
             api_key = os.getenv("GOOGLE_API_KEY", "")
             if not api_key:
                 raise RuntimeError("GOOGLE_API_KEY not set")
-            self._llm = ChatGoogleGenerativeAI(
-                model=self._model,
-                google_api_key=api_key,
-                temperature=0.1,
-            )
-        return self._llm
+            self._client = genai.Client(api_key=api_key)
+        return self._client
+
+    def _generate(self, prompt: str) -> str:
+        client = self._get_client()
+        response = client.models.generate_content(
+            model=self._model,
+            contents=prompt,
+            config=genai_types.GenerateContentConfig(temperature=0.1),
+        )
+        return response.text.strip()
 
     @property
     @abstractmethod
@@ -73,44 +76,34 @@ class BaseValidatorAgent(ABC):
         return item.category in self.categories
 
     def validate(self, item: DeficiencyItem) -> GeneratedResponse:
-        prompt = ChatPromptTemplate.from_messages([
-            ("system", self.system_prompt),
-            ("human", """Analyze the following deficiency from an Examiner's Notice and draft a correction response.
+        prompt = f"""{self.system_prompt}
+
+Analyze the following deficiency from an Examiner's Notice and draft a correction response.
 
 **Deficiency Text:**
-{raw_notice_text}
+{item.raw_notice_text}
 
 **Extracted Action Required:**
-{extracted_action}
+{item.extracted_action}
 
-Respond with a JSON object containing:
+Respond ONLY with a valid JSON object (no markdown fences) containing:
 - "draft_text": The professional response text to submit to the City
 - "resolution_status": One of RESOLVED, DRAWING_REVISION_NEEDED, VARIANCE_REQUIRED, LDA_REQUIRED, OUT_OF_SCOPE
 - "citations": Array of objects with "bylaw", "section", "version" fields
-- "variance_magnitude": If variance needed, describe the magnitude (e.g., "0.3m over maximum height")
-- "reasoning": Your internal reasoning for this response
-"""),
-        ])
+- "variance_magnitude": If variance needed, describe the magnitude (e.g., "0.3m over maximum height"), else null
+- "reasoning": Your internal reasoning for this response"""
 
-        chain = prompt | self.llm
-        result = chain.invoke({
-            "raw_notice_text": item.raw_notice_text,
-            "extracted_action": item.extracted_action,
-        })
+        content = self._generate(prompt)
 
-        # Parse the LLM response into structured output
-        import json
+        # Strip any accidental markdown fences
+        if content.startswith("```"):
+            content = content.split("\n", 1)[1].rsplit("```", 1)[0].strip()
+
         try:
-            content = result.content
-            # Extract JSON from potential markdown code block
-            if "```json" in content:
-                content = content.split("```json")[1].split("```")[0]
-            elif "```" in content:
-                content = content.split("```")[1].split("```")[0]
-            parsed = json.loads(content.strip())
-        except (json.JSONDecodeError, IndexError):
+            parsed = json.loads(content)
+        except json.JSONDecodeError:
             parsed = {
-                "draft_text": str(result.content),
+                "draft_text": content,
                 "resolution_status": "OUT_OF_SCOPE",
                 "citations": [],
                 "variance_magnitude": None,
@@ -248,22 +241,23 @@ When drafting responses, cite relevant Toronto Water and Engineering standards."
 
 
 # ---------------------------------------------------------------------------
-# Agent Registry
+# Agent Registry — lazy factory, no module-level construction
 # ---------------------------------------------------------------------------
 
-ALL_AGENTS: List[BaseValidatorAgent] = [
-    ZoningValidatorAgent(),
-    OBCValidatorAgent(),
-    FireAccessValidatorAgent(),
-    TreeProtectionAgent(),
-    LandscapingValidatorAgent(),
-    ServicingValidatorAgent(),
+_AGENT_CLASSES = [
+    ZoningValidatorAgent,
+    OBCValidatorAgent,
+    FireAccessValidatorAgent,
+    TreeProtectionAgent,
+    LandscapingValidatorAgent,
+    ServicingValidatorAgent,
 ]
 
 
 def get_agent_for_deficiency(item: DeficiencyItem) -> Optional[BaseValidatorAgent]:
-    """Find the right specialist agent for a given deficiency."""
-    for agent in ALL_AGENTS:
+    """Find and instantiate the right specialist agent for a given deficiency."""
+    for AgentClass in _AGENT_CLASSES:
+        agent = AgentClass()
         if agent.can_handle(item):
             return agent
     return None
