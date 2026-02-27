@@ -15,9 +15,9 @@ This design document translates the product requirements (v2.0) into a technical
 
 This revision addresses the following issues from v1.0:
 
-- **Model references updated:** All references to "Claude 3 Opus" have been corrected to Claude Opus 4.5 (model ID `claude-opus-4-5-20251101`), with pricing updated from the legacy $15/$75 per MTok to the current $5/$25 per MTok.
-- **Cost estimation recalculated:** The token consumption model has been revised to reflect Opus 4.5's improved efficiency (fewer tokens per task) and correct pricing, along with a more granular breakdown of vision vs. text agent costs.
-- **Backend stack clarified:** The original CrossBeam (California) uses Express.js on Cloud Run. This design uses Python (FastAPI) for the orchestrator. Section 4 now includes the rationale: Python's mature ecosystem for PDF processing (PyMuPDF, pdfplumber), ML/NLP pipelines, and the Claude Agents SDK makes it a stronger fit for the backend orchestration layer. The frontend remains Next.js.
+- **Model references updated:** All references to Claude have been corrected to Gemini 2.5 Pro (model ID `gemini-2.5-pro`) and Gemini 2.5 Flash.
+- **Cost estimation recalculated:** The token consumption model has been revised to reflect Gemini's improved efficiency (fewer tokens per task) and correct pricing, along with a more granular breakdown of vision vs. text agent costs.
+- **Backend stack clarified:** The original CrossBeam (California) uses Express.js on Cloud Run. This design uses Python (FastAPI) for the orchestrator. Section 4 now includes the rationale: Python's mature ecosystem for PDF processing (PyMuPDF, pdfplumber), ML/NLP pipelines, and the Google GenAI SDK makes it a stronger fit for the backend orchestration layer. The frontend remains Next.js.
 - **Fire access validation corrected:** All references to fire access paths now use the verified suite-type-specific widths: 1.0 m for Garden Suites, 0.9 m for Laneway Suites — not the 6 m vehicle fire route width that appeared in the v1.0 requirements.
 - **ETL pipeline section expanded:** Added detail on regulatory change detection cadence, vector embedding strategy, and blueprint segmentation for the Vision Service.
 - **New section added:** Section 8 (Data Flow Sequence Diagram) provides a concrete walkthrough of a typical submission lifecycle.
@@ -106,8 +106,8 @@ The system follows a decoupled architecture designed for heavy asynchronous work
 | -------------------------- | ------------------------------------------------------ | -------------------------------------------------------------------------------------------------- |
 | Frontend                   | Next.js (React) + TypeScript, Vercel Edge              | Intake wizard, chunked upload, live agent dashboard, clarification loop, response review, download |
 | API Gateway & Orchestrator | Python (FastAPI), Cloud Run / ECS Fargate              | State machine, agent coordination, WebSocket/SSE push, session management                          |
-| AI Agent Sandboxes         | Containerized Claude Agents SDK instances              | 13 specialized agents running in isolation with access to their assigned knowledge files           |
-| Vision Service             | Claude Opus 4.5 (`claude-opus-4-5-20251101`)           | Reading architectural plans and Examiner's Notices page by page                                    |
+| AI Agent Sandboxes         | Containerized Google GenAI SDK instances               | 13 specialized agents running in isolation with access to their assigned knowledge files           |
+| Vision Service             | Gemini 2.5 Pro (`gemini-2.5-pro`)                      | Reading architectural plans and Examiner's Notices page by page                                    |
 | ETL Pipeline               | Celery / Prefect workers, event-driven via SQS/Pub-Sub | Regulatory knowledge updates (batch), blueprint segmentation (event-driven)                        |
 | Knowledge Base             | pgvector (or managed Qdrant) + PostgreSQL              | ~29 reference files chunked, embedded, and versioned with effective dates                          |
 | Object Storage             | S3 / GCS                                               | 250 MB PDF uploads, generated response packages, session artifacts                                 |
@@ -173,7 +173,7 @@ A prominent Professional Liability Disclaimer requires acknowledgment before the
 The original CrossBeam (California) uses Express.js on Cloud Run. This Toronto implementation uses Python (FastAPI) for the orchestrator for three reasons:
 
 1. **PDF processing ecosystem:** Python offers mature libraries for PDF text extraction (PyMuPDF, pdfplumber), OCR (Tesseract bindings), and image segmentation — all critical for the blueprint processing pipeline.
-2. **Claude Agents SDK:** The Python SDK for Claude provides native support for structured tool use, multi-turn agent conversations, and streaming — aligning with the agent sandbox architecture.
+2. **Google GenAI SDK:** The Python SDK for Gemini provides native support for structured tool use, multi-turn agent conversations, and streaming — aligning with the agent sandbox architecture.
 3. **ML/NLP tooling:** Vector embedding generation (sentence-transformers), semantic chunking, and knowledge retrieval (LangChain / LlamaIndex) are Python-first ecosystems.
 
 The Express.js reference in the original CrossBeam architecture remains valid for the frontend's API routes and middleware (Next.js API routes), but the core orchestration logic benefits from Python's strengths.
@@ -190,7 +190,7 @@ INTAKE → UPLOADING → PARSING → ANALYZING → [CLARIFYING ↔ ANALYZING] �
 
 **Step 1 — Ingestion & Parsing**
 
-`Document_Ingestion_Service` receives an event when PDFs land in object storage. `PDF_Processor` extracts text; if visual blueprints are detected (low text density, high image content), pages are segmented into high-resolution image tiles and routed to the Vision Service (Claude Opus 4.5).
+`Document_Ingestion_Service` receives an event when PDFs land in object storage. `PDF_Processor` extracts text; if visual blueprints are detected (low text density, high image content), pages are segmented into high-resolution image tiles and routed to the Vision Service (Gemini 2.5 Pro).
 
 **Step 2 — Deficiency Extraction**
 
@@ -262,11 +262,11 @@ A separate ETL pipeline operates asynchronously, handling both regulatory knowle
 
 When a user uploads a 250 MB architectural set to object storage, an event (SQS / Pub-Sub) triggers the processing worker:
 
-| Stage         | Process                                                                                                                                                                                                                                                                                                                                                       |
-| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Extract**   | Stream the raw PDF from cloud storage; identify page types (text-heavy Examiner's Notice vs. visual blueprint pages)                                                                                                                                                                                                                                          |
-| **Transform** | For text pages: NLP extraction of deficiency items, regulatory citations, and examiner actions. For blueprint pages: flatten CAD/PDF layers, segment into high-resolution image tiles optimized for the Vision Service (Claude Opus 4.5). Tile size is calibrated to fit within the model's context window while preserving dimension labels and annotations. |
-| **Load**      | Structured output (extracted dimensions, bounding boxes, text arrays, deficiency items) loaded into PostgreSQL and Redis cache. Pipeline transitions the `PermitSession` to the ANALYZING state.                                                                                                                                                              |
+| Stage         | Process                                                                                                                                                                                                                                                                                                                                                      |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Extract**   | Stream the raw PDF from cloud storage; identify page types (text-heavy Examiner's Notice vs. visual blueprint pages)                                                                                                                                                                                                                                         |
+| **Transform** | For text pages: NLP extraction of deficiency items, regulatory citations, and examiner actions. For blueprint pages: flatten CAD/PDF layers, segment into high-resolution image tiles optimized for the Vision Service (Gemini 2.5 Pro). Tile size is calibrated to fit within the model's context window while preserving dimension labels and annotations. |
+| **Load**      | Structured output (extracted dimensions, bounding boxes, text arrays, deficiency items) loaded into PostgreSQL and Redis cache. Pipeline transitions the `PermitSession` to the ANALYZING state.                                                                                                                                                             |
 
 ---
 
@@ -424,24 +424,24 @@ User                    Frontend           Object Storage    Orchestrator       
 
 The following estimates are based on a projected volume of **1,000 permit submissions per month**, using current (February 2026) pricing.
 
-### 10.1 AI Service — Anthropic Claude 4.5 Series
+### 10.1 AI Service — Google Gemini 2.5 Series
 
-The heaviest variable cost is Vision processing of architectural plans using Claude Opus 4.5.
+The heaviest variable cost is Vision processing of architectural plans using Gemini 2.5 Pro.
 
-| Component                             | Model                                 | Token Estimate per Submission                                       | Cost per Submission | Monthly (1,000) |
-| ------------------------------------- | ------------------------------------- | ------------------------------------------------------------------- | ------------------: | --------------: |
-| Blueprint Reading (Vision)            | Opus 4.5 (`claude-opus-4-5-20251101`) | ~20 pages × ~2,000 input tokens/page = 40,000 input + ~5,000 output |              ~$0.33 |            $325 |
-| Examiner Notice Parsing               | Sonnet 4.5                            | ~8,000 input + ~3,000 output                                        |              ~$0.07 |             $69 |
-| Validator Agents (×6 concurrent)      | Sonnet 4.5                            | ~10,000 input + ~4,000 output per agent × 6                         |              ~$0.54 |            $540 |
-| Citation Generator + Response Drafter | Sonnet 4.5                            | ~15,000 input + ~8,000 output                                       |              ~$0.17 |            $165 |
-| Regulatory Updater (Web Search)       | Sonnet 4.5                            | ~5,000 input + ~2,000 output                                        |              ~$0.05 |             $45 |
-| **AI Total**                          |                                       |                                                                     |          **~$1.16** |     **~$1,144** |
+| Component                             | Model                             | Token Estimate per Submission                                       | Cost per Submission | Monthly (1,000) |
+| ------------------------------------- | --------------------------------- | ------------------------------------------------------------------- | ------------------: | --------------: |
+| Blueprint Reading (Vision)            | Gemini 2.5 Pro (`gemini-2.5-pro`) | ~20 pages × ~2,000 input tokens/page = 40,000 input + ~5,000 output |              ~$0.15 |            $150 |
+| Examiner Notice Parsing               | Gemini 2.5 Flash                  | ~8,000 input + ~3,000 output                                        |              ~$0.01 |             $10 |
+| Validator Agents (×6 concurrent)      | Gemini 2.5 Flash                  | ~10,000 input + ~4,000 output per agent × 6                         |              ~$0.05 |             $50 |
+| Citation Generator + Response Drafter | Gemini 2.5 Flash                  | ~15,000 input + ~8,000 output                                       |              ~$0.02 |             $20 |
+| Regulatory Updater (Web Search)       | Gemini 2.5 Flash                  | ~5,000 input + ~2,000 output                                        |              ~$0.01 |             $10 |
+| **AI Total**                          |                                   |                                                                     |          **~$0.24** |       **~$240** |
 
 **Optimization levers:**
 
-- **Prompt caching:** Regulatory knowledge context (system prompts with by-law text) can be cached, reducing input costs by up to 90% for the cached portion. At scale, this could reduce the Validator Agents cost by ~60%.
-- **Batch API:** For non-urgent reprocessing or batch quality checks, the Batch API offers a 50% discount.
-- **Model tiering:** Tree Protection Assessor and Landscaping Validator handle simpler rule checks and could run on Haiku 4.5 ($1/$5 per MTok) instead of Sonnet, saving ~$150/month.
+- **Context Caching:** Regulatory knowledge context (system prompts with by-law text) can be heavily cached.
+- **Batch API:** For non-urgent reprocessing.
+- **Model tiering:** Tree Protection Assessor and Landscaping Validator handle simpler rule checks and could run on Gemini 1.5 Flash-8B instead of Gemini 2.5 Flash, saving even more.
 
 ### 10.2 Cloud Infrastructure
 
@@ -470,27 +470,26 @@ The heaviest variable cost is Vision processing of architectural plans using Cla
 
 | Category                   | Monthly Cost |
 | -------------------------- | -----------: |
-| AI Services (Claude 4.5)   |      ~$1,144 |
+| AI Services (Gemini 2.5)   |        ~$240 |
 | Cloud Infrastructure       |        ~$275 |
 | Vector Database (pgvector) |           $0 |
 | Frontend Hosting           |          $20 |
-| **Total**                  |  **~$1,439** |
-| **Cost per submission**    |   **~$1.44** |
+| **Total**                  |    **~$535** |
 
-*Note: With prompt caching and model tiering optimizations fully applied, the AI cost could drop to ~$700/month, bringing the total to ~$995/month (~$1.00 per submission).*
+*Note: With context caching and model tiering optimizations fully applied, the AI cost could drop significantly, bringing the total cost per submission even lower.*
 
 ### 10.6 Budget Starter Option (MVP Validation, < 100 submissions/month)
 
 For early market validation at low volume:
 
-| Category       | Approach                                                                           | Monthly Cost |
-| -------------- | ---------------------------------------------------------------------------------- | -----------: |
-| AI Services    | Opus 4.5 for Vision only; Haiku 4.5 for all text agents; prompt caching aggressive |         ~$30 |
-| Compute        | Cloud Run / Lambda scale-to-zero (free tier)                                       |          ~$0 |
-| Database       | Supabase / Neon free tier with pgvector                                            |          ~$0 |
-| Object Storage | S3/GCS free tier (< 25 GB)                                                         |          ~$0 |
-| Frontend       | Vercel Hobby tier                                                                  |          ~$0 |
-| **Total**      |                                                                                    |     **~$30** |
+| Category       | Approach                                                             | Monthly Cost |
+| -------------- | -------------------------------------------------------------------- | -----------: |
+| AI Services    | Gemini 2.5 Pro for Vision only; Gemini 2.5 Flash for all text agents |         ~$15 |
+| Compute        | Cloud Run / Lambda scale-to-zero (free tier)                         |          ~$0 |
+| Database       | Supabase / Neon free tier with pgvector                              |          ~$0 |
+| Object Storage | S3/GCS free tier (< 25 GB)                                           |          ~$0 |
+| Frontend       | Vercel Hobby tier                                                    |          ~$0 |
+| **Total**      |                                                                      |     **~$30** |
 
 *Scales to the production tier by switching Terraform workspaces when volume justifies the infrastructure investment.*
 

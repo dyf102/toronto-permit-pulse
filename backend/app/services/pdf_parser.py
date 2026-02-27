@@ -3,17 +3,17 @@ from typing import List
 from uuid import UUID
 import json
 
-from langchain_anthropic import ChatAnthropic
+from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain.prompts import PromptTemplate
 from langchain.output_parsers import PydanticOutputParser
 from app.models.domain import ExaminerNoticeExtractionResult, DeficiencyItem
 
 class ExaminerNoticeParserService:
     def __init__(self, api_key: str):
-        # We model the text parsing using Claude 4.5 Sonnet equivalent
-        self.llm = ChatAnthropic(
-            model="claude-3-5-sonnet-20241022", # Closest model ID, adapt as 4.5 series rolls out
-            anthropic_api_key=api_key,
+        # We model the text parsing using Gemini 2.5 Pro equivalent
+        self.llm = ChatGoogleGenerativeAI(
+            model="gemini-2.5-pro", # Adapting to Gemini series
+            google_api_key=api_key,
             temperature=0.0
         )
         self.parser = PydanticOutputParser(pydantic_object=ExaminerNoticeExtractionResult)
@@ -34,7 +34,7 @@ class ExaminerNoticeParserService:
 
     def parse_examiner_notice(self, session_id: UUID, pdf_path: str) -> List[DeficiencyItem]:
         """
-        Extracts text from PDF and uses Claude to structure the deficiencies.
+        Extracts text from PDF and uses Gemini to structure the deficiencies.
         """
         raw_text = self.extract_text_from_pdf(pdf_path)
 
