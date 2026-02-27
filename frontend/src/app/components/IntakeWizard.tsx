@@ -6,13 +6,19 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 type WizardStep = 1 | 2 | 3 | 4;
 
-interface SessionResponse {
-    session_id: string;
-    status: string;
-    upload_url: string;
+const PIPELINE_STAGES = [
+    { key: "upload", label: "Uploading PDF" },
+    { key: "parse", label: "Parsing Notice (Gemini Vision)" },
+    { key: "analyze", label: "Analyzing Deficiencies" },
+    { key: "draft", label: "Drafting Responses" },
+];
+
+interface IntakeWizardProps {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    onPipelineComplete?: (result: any) => void;
 }
 
-export default function IntakeWizard() {
+export default function IntakeWizard({ onPipelineComplete }: IntakeWizardProps) {
     const [step, setStep] = useState<WizardStep>(1);
     const [address, setAddress] = useState("");
     const [suiteType, setSuiteType] = useState<"GARDEN" | "LANEWAY" | "">("");
@@ -24,6 +30,7 @@ export default function IntakeWizard() {
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [uploadFile, setUploadFile] = useState<File | null>(null);
     const [uploadStatus, setUploadStatus] = useState<string | null>(null);
+    const [activeStage, setActiveStage] = useState<string | null>(null);
     const [error, setError] = useState<string | null>(null);
 
     const legacyMunicipalities = [
@@ -66,7 +73,7 @@ export default function IntakeWizard() {
                 throw new Error(err.detail || "Failed to create session");
             }
 
-            const data: SessionResponse = await res.json();
+            const data: { session_id: string; status: string; upload_url: string } = await res.json();
             setSessionId(data.session_id);
             setStep(4);
         } catch (err: unknown) {
@@ -76,40 +83,53 @@ export default function IntakeWizard() {
         }
     }, [address, suiteType, lanewayAbutment, preApprovedPlan]);
 
-    const handleUpload = useCallback(async () => {
-        if (!uploadFile || !sessionId) return;
+    const handleRunPipeline = useCallback(async () => {
+        if (!uploadFile || !suiteType) return;
         setIsSubmitting(true);
         setError(null);
-        setUploadStatus("Uploading...");
 
         try {
+            setActiveStage("upload");
             const formData = new FormData();
             formData.append("file", uploadFile);
+            formData.append("property_address", address);
+            formData.append("suite_type", suiteType);
+            if (lanewayAbutment) {
+                formData.append("laneway_abutment_length", lanewayAbutment);
+            }
 
-            const res = await fetch(
-                `${API_URL}/api/v1/sessions/${sessionId}/upload`,
-                {
-                    method: "POST",
-                    body: formData,
-                }
-            );
+            // Small delay to show upload stage
+            await new Promise((r) => setTimeout(r, 400));
+            setActiveStage("parse");
+
+            const res = await fetch(`${API_URL}/api/v1/pipeline/run`, {
+                method: "POST",
+                body: formData,
+            });
+
+            setActiveStage("analyze");
+            await new Promise((r) => setTimeout(r, 300));
+            setActiveStage("draft");
 
             if (!res.ok) {
                 const err = await res.json();
-                throw new Error(err.detail || "Upload failed");
+                throw new Error(err.detail || "Pipeline failed");
             }
 
             const data = await res.json();
-            setUploadStatus(
-                `✓ ${data.filename} (${data.file_size_mb} MB) — ${data.message}`
-            );
+            setUploadStatus("complete");
+
+            // Hand off to parent
+            if (onPipelineComplete) {
+                onPipelineComplete(data);
+            }
         } catch (err: unknown) {
-            setError(err instanceof Error ? err.message : "Upload failed");
-            setUploadStatus(null);
+            setError(err instanceof Error ? err.message : "Pipeline failed");
+            setActiveStage(null);
         } finally {
             setIsSubmitting(false);
         }
-    }, [uploadFile, sessionId]);
+    }, [uploadFile, sessionId, address, suiteType, lanewayAbutment, onPipelineComplete]);
 
     return (
         <div className="w-full max-w-2xl mx-auto rounded-2xl shadow-2xl bg-white/80 dark:bg-zinc-900/80 backdrop-blur-xl border border-zinc-200 dark:border-zinc-800 overflow-hidden transition-all duration-300">
@@ -125,12 +145,12 @@ export default function IntakeWizard() {
                     <div className="h-2 w-full bg-zinc-200 dark:bg-zinc-800 rounded-full overflow-hidden flex">
                         <div
                             className={`h-full bg-gradient-to-r from-blue-500 to-indigo-600 transition-all duration-500 ease-in-out ${step === 1
-                                    ? "w-1/4"
-                                    : step === 2
-                                        ? "w-2/4"
-                                        : step === 3
-                                            ? "w-3/4"
-                                            : "w-full"
+                                ? "w-1/4"
+                                : step === 2
+                                    ? "w-2/4"
+                                    : step === 3
+                                        ? "w-3/4"
+                                        : "w-full"
                                 }`}
                         />
                     </div>
@@ -213,8 +233,8 @@ export default function IntakeWizard() {
                                 id="garden-suite-btn"
                                 onClick={() => setSuiteType("GARDEN")}
                                 className={`p-6 rounded-xl border-2 text-left transition-all duration-200 ${suiteType === "GARDEN"
-                                        ? "border-indigo-500 bg-indigo-50 dark:bg-indigo-950/30 ring-4 ring-indigo-500/20"
-                                        : "border-zinc-200 dark:border-zinc-700 hover:border-indigo-300 hover:bg-zinc-50 dark:hover:bg-zinc-800"
+                                    ? "border-indigo-500 bg-indigo-50 dark:bg-indigo-950/30 ring-4 ring-indigo-500/20"
+                                    : "border-zinc-200 dark:border-zinc-700 hover:border-indigo-300 hover:bg-zinc-50 dark:hover:bg-zinc-800"
                                     }`}
                             >
                                 <div className="flex items-center space-x-3 mb-2">
@@ -233,8 +253,8 @@ export default function IntakeWizard() {
                                 id="laneway-suite-btn"
                                 onClick={() => setSuiteType("LANEWAY")}
                                 className={`p-6 rounded-xl border-2 text-left transition-all duration-200 ${suiteType === "LANEWAY"
-                                        ? "border-indigo-500 bg-indigo-50 dark:bg-indigo-950/30 ring-4 ring-indigo-500/20"
-                                        : "border-zinc-200 dark:border-zinc-700 hover:border-indigo-300 hover:bg-zinc-50 dark:hover:bg-zinc-800"
+                                    ? "border-indigo-500 bg-indigo-50 dark:bg-indigo-950/30 ring-4 ring-indigo-500/20"
+                                    : "border-zinc-200 dark:border-zinc-700 hover:border-indigo-300 hover:bg-zinc-50 dark:hover:bg-zinc-800"
                                     }`}
                             >
                                 <div className="flex items-center space-x-3 mb-2">
@@ -365,17 +385,40 @@ export default function IntakeWizard() {
                             {uploadFile && !uploadStatus && (
                                 <button
                                     id="upload-btn"
-                                    onClick={handleUpload}
+                                    onClick={handleRunPipeline}
                                     disabled={isSubmitting}
                                     className="w-full px-6 py-3 rounded-lg text-sm font-semibold bg-gradient-to-r from-blue-500 to-indigo-600 text-white hover:from-blue-600 hover:to-indigo-700 transition-all shadow-md hover:shadow-lg disabled:opacity-50 disabled:cursor-not-allowed"
                                 >
-                                    {isSubmitting ? "Uploading..." : "Upload & Start Analysis"}
+                                    {isSubmitting ? "Running Analysis..." : "Upload & Run AI Analysis"}
                                 </button>
                             )}
 
-                            {uploadStatus && (
-                                <div className="p-4 rounded-lg bg-green-50 border border-green-200 dark:bg-green-950/30 dark:border-green-900/50 text-green-700 dark:text-green-300 text-sm">
-                                    {uploadStatus}
+                            {/* Pipeline progress indicator */}
+                            {isSubmitting && activeStage && (
+                                <div className="mt-4 space-y-2">
+                                    {PIPELINE_STAGES.map((stage, i) => {
+                                        const stageIdx = PIPELINE_STAGES.findIndex(s => s.key === activeStage);
+                                        const isDone = i < stageIdx;
+                                        const isActive = stage.key === activeStage;
+                                        return (
+                                            <div key={stage.key} className="flex items-center gap-3">
+                                                <div className={`w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0 transition-all duration-300 ${isDone ? "bg-emerald-500" : isActive ? "bg-indigo-500 animate-pulse" : "bg-zinc-200 dark:bg-zinc-700"
+                                                    }`}>
+                                                    {isDone && (
+                                                        <svg className="w-3 h-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M5 13l4 4L19 7" />
+                                                        </svg>
+                                                    )}
+                                                </div>
+                                                <span className={`text-sm transition-colors duration-200 ${isDone ? "text-emerald-600 dark:text-emerald-400 line-through" :
+                                                    isActive ? "text-indigo-600 dark:text-indigo-400 font-semibold" :
+                                                        "text-zinc-400 dark:text-zinc-600"
+                                                    }`}>
+                                                    {stage.label}
+                                                </span>
+                                            </div>
+                                        );
+                                    })}
                                 </div>
                             )}
                         </div>
