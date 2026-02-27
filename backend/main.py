@@ -1,10 +1,38 @@
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from app.api.sessions import router as sessions_router
 
-app = FastAPI(title="CrossBeam Toronto API")
+app = FastAPI(
+    title="Permit Pulse Toronto API",
+    description="AI-powered permit correction response generator for Garden & Laneway Suites",
+    version="0.1.0",
+)
+
+# CORS — allow the Next.js frontend to call the API
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:3000",
+        "http://localhost:3001",
+        "https://permit-pulse.ca",
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Mount API routes
+app.include_router(sessions_router)
+
 
 @app.get("/")
 async def root():
-    return {"message": "Welcome to the CrossBeam Toronto Permit System API", "status": "online"}
+    return {
+        "service": "Permit Pulse Toronto API",
+        "version": "0.1.0",
+        "status": "online",
+    }
+
 
 @app.get("/health")
 async def health():
