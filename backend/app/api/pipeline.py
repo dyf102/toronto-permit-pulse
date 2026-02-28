@@ -5,6 +5,7 @@ Includes both synchronous and SSE streaming variants.
 import asyncio
 import json
 import os
+import queue
 import tempfile
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException
 from fastapi.responses import StreamingResponse
@@ -104,6 +105,7 @@ async def stream_pipeline(
     Events emitted:
       - progress: { stage, description, percent }
       - item:     { index, total, category, action }
+      - retry:    { attempt, delay, max_retries, reason }
       - complete: { <full result payload> }
       - error:    { message }
     """
@@ -128,6 +130,28 @@ async def stream_pipeline(
     contents = await file.read()
 
     async def event_generator():
+        # Thread-safe queue for retry events from thread executor
+        retry_queue: queue.Queue = queue.Queue()
+
+        def _on_retry(attempt: int, delay: float, reason: str):
+            """Called from thread executor — push event into thread-safe queue."""
+            retry_queue.put({
+                "attempt": attempt,
+                "delay": round(delay, 1),
+                "max_retries": 5,
+                "reason": reason,
+            })
+
+        def _drain_retry_events():
+            """Drain queued retry events into SSE strings."""
+            events = []
+            while not retry_queue.empty():
+                try:
+                    events.append(_sse_event("retry", retry_queue.get_nowait()))
+                except queue.Empty:
+                    break
+            return events
+
         tmp_path = None
         try:
             # --- Stage 1: Upload received ---
@@ -159,9 +183,16 @@ async def stream_pipeline(
 
             parser = ExaminerNoticeParserService(api_key=GOOGLE_API_KEY)
             loop = asyncio.get_event_loop()
+
+            # Pass retry callback so SSE can surface 429 retries to frontend
             deficiencies = await loop.run_in_executor(
-                None, parser.parse_examiner_notice, session.id, tmp_path
+                None,
+                lambda: parser.parse_examiner_notice(session.id, tmp_path, _on_retry),
             )
+
+            # Drain any retry events from parsing
+            for evt in _drain_retry_events():
+                yield evt
 
             yield _sse_event("progress", {
                 "stage": "parse",
@@ -215,6 +246,10 @@ async def stream_pipeline(
                             "agent": agent.agent_name,
                             "error": str(e),
                         })
+
+                    # Drain retry events from this agent call
+                    for evt in _drain_retry_events():
+                        yield evt
                 else:
                     unhandled.append({
                         "deficiency": item.dict(),
@@ -264,6 +299,9 @@ async def stream_pipeline(
             yield _sse_event("complete", result)
 
         except Exception as e:
+            # Drain any pending retry events before error
+            for evt in _drain_retry_events():
+                yield evt
             yield _sse_event("error", {"message": str(e)})
 
         finally:

@@ -11,6 +11,7 @@ from app.models.domain import (
     DeficiencyItem,
     DeficiencyCategory,
 )
+from app.services.gemini_retry import retry_gemini_call
 
 
 class ExaminerNoticeParserService:
@@ -30,11 +31,14 @@ class ExaminerNoticeParserService:
         return "\n".join(full_text)
 
     def parse_examiner_notice(
-        self, session_id: UUID, pdf_path: str
+        self, session_id: UUID, pdf_path: str, on_retry=None
     ) -> List[DeficiencyItem]:
         """
         Extracts text from PDF and uses Gemini to structure the deficiencies.
         Returns a list of DeficiencyItem objects.
+
+        Args:
+            on_retry: Optional callback(attempt, delay, reason) passed to retry_gemini_call.
         """
         raw_text = self.extract_text_from_pdf(pdf_path)
 
@@ -74,10 +78,18 @@ Here is the Examiner's Notice text:
 
 Return only the JSON array:"""
 
-        response = self.client.models.generate_content(
-            model=self.model,
-            contents=prompt,
-            config=genai_types.GenerateContentConfig(temperature=0.0),
+        def _call_gemini():
+            return self.client.models.generate_content(
+                model=self.model,
+                contents=prompt,
+                config=genai_types.GenerateContentConfig(temperature=0.0),
+            )
+
+        response = retry_gemini_call(
+            _call_gemini,
+            on_retry=on_retry or (lambda attempt, delay, reason: print(
+                f"[parser] {reason} — retrying in {delay:.1f}s"
+            )),
         )
 
         content = response.text.strip()

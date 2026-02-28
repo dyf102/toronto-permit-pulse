@@ -19,6 +19,7 @@ from app.models.domain import (
     ResolutionStatus,
     DeficiencyCategory,
 )
+from app.services.gemini_retry import retry_gemini_call
 
 
 
@@ -49,10 +50,19 @@ class BaseValidatorAgent(ABC):
 
     def _generate(self, prompt: str) -> str:
         client = self._get_client()
-        response = client.models.generate_content(
-            model=self._model,
-            contents=prompt,
-            config=genai_types.GenerateContentConfig(temperature=0.1),
+
+        def _call():
+            return client.models.generate_content(
+                model=self._model,
+                contents=prompt,
+                config=genai_types.GenerateContentConfig(temperature=0.1),
+            )
+
+        response = retry_gemini_call(
+            _call,
+            on_retry=lambda attempt, delay, reason: print(
+                f"[{self.agent_name}] {reason} — retrying in {delay:.1f}s"
+            ),
         )
         return response.text.strip()
 

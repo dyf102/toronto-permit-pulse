@@ -129,6 +129,10 @@ export default function IntakeWizard({ onPipelineComplete }: IntakeWizardProps) 
                             setProgressDesc(payload.description);
                         } else if (eventType === "item") {
                             setCurrentItem(payload);
+                        } else if (eventType === "retry") {
+                            setProgressDesc(
+                                `⏳ Rate limited — retrying in ${Math.ceil(payload.delay)}s (attempt ${payload.attempt}/${payload.max_retries})…`
+                            );
                         } else if (eventType === "complete") {
                             setUploadStatus("complete");
                             setCurrentItem(null);
