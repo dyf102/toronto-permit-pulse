@@ -5,10 +5,23 @@ from app.api.parsing import router as parsing_router
 from app.api.pipeline import router as pipeline_router
 from app.api.export import router as export_router
 
+from contextlib import asynccontextmanager
+
+from app.db.database import engine, Base
+from app.models.db_models import PermitSessionDB, DeficiencyItemDB
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Initialize DB tables on startup
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    yield
+
 app = FastAPI(
     title="Permit Pulse Toronto API",
     description="AI-powered permit correction response generator for Garden & Laneway Suites",
     version="0.1.0",
+    lifespan=lifespan,
 )
 
 # CORS — allow the Next.js frontend to call the API

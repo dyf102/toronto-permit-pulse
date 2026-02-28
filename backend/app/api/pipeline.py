@@ -7,11 +7,14 @@ import json
 import os
 import queue
 import tempfile
-from fastapi import APIRouter, UploadFile, File, Form, HTTPException
+from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Depends
 from fastapi.responses import StreamingResponse
+from sqlalchemy.ext.asyncio import AsyncSession
 from uuid import UUID, uuid4
 
 from app.models.domain import PermitSession, SuiteType, SessionStatus
+from app.db.database import get_db
+from app.models.db_models import PermitSessionDB, DeficiencyItemDB
 from app.services.pdf_parser import ExaminerNoticeParserService
 from app.services.orchestrator import OrchestratorService
 
@@ -31,6 +34,7 @@ async def run_full_pipeline(
     suite_type: str = Form(...),
     file: UploadFile = File(...),
     laneway_abutment_length: float = Form(None),
+    db: AsyncSession = Depends(get_db),
 ):
     """
     End-to-end pipeline: accepts a PDF and property details,
@@ -71,6 +75,30 @@ async def run_full_pipeline(
         deficiencies = parser.parse_examiner_notice(
             session_id=session.id, pdf_path=tmp_path
         )
+        
+        # --- Database Persistence ---
+        db_session = PermitSessionDB(
+            id=session.id,
+            property_address=session.property_address,
+            suite_type=session.suite_type,
+            laneway_abutment_length=session.laneway_abutment_length,
+            status=session.status,
+        )
+        
+        for idx, d in enumerate(deficiencies):
+            db_def = DeficiencyItemDB(
+                id=d.id,
+                session_id=session.id,
+                category=d.category,
+                raw_notice_text=d.raw_notice_text,
+                extracted_action=d.extracted_action,
+                agent_confidence=d.agent_confidence,
+                order_index=idx,
+            )
+            db_session.deficiencies.append(db_def)
+
+        db.add(db_session)
+        await db.commit()
 
         session.status = SessionStatus.ANALYZING
         orchestrator = OrchestratorService()
@@ -97,6 +125,7 @@ async def stream_pipeline(
     suite_type: str = Form(...),
     file: UploadFile = File(...),
     laneway_abutment_length: float = Form(None),
+    db: AsyncSession = Depends(get_db),
 ):
     """
     SSE streaming variant of the pipeline. Returns a text/event-stream
@@ -189,6 +218,30 @@ async def stream_pipeline(
                 None,
                 lambda: parser.parse_examiner_notice(session.id, tmp_path, _on_retry),
             )
+            
+            # --- Database Persistence ---
+            db_session = PermitSessionDB(
+                id=session.id,
+                property_address=session.property_address,
+                suite_type=session.suite_type,
+                laneway_abutment_length=session.laneway_abutment_length,
+                status=session.status,
+            )
+            
+            for idx, d in enumerate(deficiencies):
+                db_def = DeficiencyItemDB(
+                    id=d.id,
+                    session_id=session.id,
+                    category=d.category,
+                    raw_notice_text=d.raw_notice_text,
+                    extracted_action=d.extracted_action,
+                    agent_confidence=d.agent_confidence,
+                    order_index=idx,
+                )
+                db_session.deficiencies.append(db_def)
+
+            db.add(db_session)
+            await db.commit()
 
             # Drain any retry events from parsing
             for evt in _drain_retry_events():
