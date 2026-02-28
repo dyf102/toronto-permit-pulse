@@ -73,6 +73,9 @@ async def run_full_pipeline(
 
         session.status = SessionStatus.COMPLETE
         result["status"] = session.status.value
+        result["session_id"] = str(session.id)
+        result["property_address"] = property_address
+        result["suite_type"] = suite_type.upper()
 
         return result
 
