@@ -102,7 +102,7 @@ async def run_full_pipeline(
 
         session.status = SessionStatus.ANALYZING
         orchestrator = OrchestratorService()
-        result = orchestrator.process_deficiencies(session, deficiencies)
+        result = await orchestrator.process_deficiencies(session, deficiencies, db)
 
         session.status = SessionStatus.COMPLETE
         result["status"] = session.status.value
@@ -264,6 +264,9 @@ async def stream_pipeline(
 
             session.status = SessionStatus.ANALYZING
             from app.services.agents import get_agent_for_deficiency
+            from app.services.knowledge_base import KnowledgeBaseService
+
+            kb_service = KnowledgeBaseService(GOOGLE_API_KEY) if GOOGLE_API_KEY else None
 
             results = []
             unhandled = []
@@ -284,8 +287,14 @@ async def stream_pipeline(
                     await asyncio.sleep(0)
 
                     try:
+                        context_text = ""
+                        if kb_service:
+                            query = f"{item.raw_notice_text} {item.extracted_action}"
+                            chunks = await kb_service.search_context(query, db, top_k=2)
+                            context_text = "\n\n".join(chunks)
+
                         response = await loop.run_in_executor(
-                            None, agent.validate, item
+                            None, agent.validate, item, context_text
                         )
                         results.append({
                             "deficiency": item.dict(),

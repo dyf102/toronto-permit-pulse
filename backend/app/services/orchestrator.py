@@ -4,6 +4,9 @@ Orchestrator that coordinates the full pipeline:
 """
 from typing import List, Dict
 from uuid import UUID
+from sqlalchemy.ext.asyncio import AsyncSession
+import os
+import asyncio
 
 from app.models.domain import (
     DeficiencyItem,
@@ -13,6 +16,7 @@ from app.models.domain import (
     DeficiencyCategory,
 )
 from app.services.agents import get_agent_for_deficiency, BaseValidatorAgent
+from app.services.knowledge_base import KnowledgeBaseService
 
 
 class OrchestratorService:
@@ -21,21 +25,37 @@ class OrchestratorService:
     Takes parsed deficiencies and routes them to specialized agents.
     """
 
-    def process_deficiencies(
-        self, session: PermitSession, items: List[DeficiencyItem]
+    async def process_deficiencies(
+        self, session: PermitSession, items: List[DeficiencyItem], db: AsyncSession
     ) -> Dict:
         """
-        Process all deficiency items through the agent pipeline.
+        Process all deficiency items through the agent pipeline asynchronously.
         Returns structured results grouped by category.
         """
         results: List[Dict] = []
         unhandled: List[Dict] = []
+        
+        api_key = os.getenv("GOOGLE_API_KEY", "")
+        kb_service = KnowledgeBaseService(api_key) if api_key else None
+        
+        loop = asyncio.get_event_loop()
 
         for item in items:
             agent = get_agent_for_deficiency(item)
             if agent:
                 try:
-                    response = agent.validate(item)
+                    # Retrieve relevant context from Knowledge Base
+                    context_text = ""
+                    if kb_service:
+                        query = f"{item.raw_notice_text} {item.extracted_action}"
+                        chunks = await kb_service.search_context(query, db, top_k=2)
+                        context_text = "\n\n".join(chunks)
+
+                    # Agent validation runs synchronously, so dispatch to thread
+                    response = await loop.run_in_executor(
+                        None, agent.validate, item, context_text
+                    )
+                    
                     results.append({
                         "deficiency": item.dict(),
                         "response": response.dict(),

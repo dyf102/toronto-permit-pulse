@@ -85,11 +85,13 @@ class BaseValidatorAgent(ABC):
     def can_handle(self, item: DeficiencyItem) -> bool:
         return item.category in self.categories
 
-    def validate(self, item: DeficiencyItem) -> GeneratedResponse:
+    def validate(self, item: DeficiencyItem, retrieved_context: str = "") -> GeneratedResponse:
+        context_block = f"\n**Relevant By-law/Code Context:**\n{retrieved_context}\n" if retrieved_context else ""
+        
         prompt = f"""{self.system_prompt}
 
 Analyze the following deficiency from an Examiner's Notice and draft a correction response.
-
+{context_block}
 **Deficiency Text:**
 {item.raw_notice_text}
 

@@ -3,9 +3,22 @@ from datetime import datetime
 from sqlalchemy import Column, String, Float, Boolean, DateTime, ForeignKey, Text, Integer, Enum as SQLEnum
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import relationship
+from pgvector.sqlalchemy import Vector
+from sqlalchemy import JSON
 
 from app.db.database import Base
 from app.models.domain import SessionStatus, SuiteType, DeficiencyCategory
+
+class KnowledgeChunkDB(Base):
+    __tablename__ = "knowledge_chunks"
+
+    id = Column(PGUUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    file_name = Column(String, nullable=False, index=True)
+    chunk_index = Column(Integer, nullable=False)
+    content = Column(Text, nullable=False)
+    metadata_json = Column(JSON, nullable=True) # E.g., article/section numbers, effective dates
+    # text-embedding-004 output dimension is 768
+    embedding = Column(Vector(768), nullable=False) 
 
 class PermitSessionDB(Base):
     __tablename__ = "permit_sessions"
