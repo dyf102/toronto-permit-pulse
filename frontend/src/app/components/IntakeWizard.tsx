@@ -10,7 +10,8 @@ const PIPELINE_STAGES = [
     { key: "upload", label: "Uploading PDF" },
     { key: "parse", label: "Parsing Notice (Gemini Vision)" },
     { key: "analyze", label: "Analyzing Deficiencies" },
-    { key: "draft", label: "Drafting Responses" },
+    { key: "draft", label: "Packaging Responses" },
+    { key: "complete", label: "Complete" },
 ];
 
 interface IntakeWizardProps {
@@ -31,6 +32,9 @@ export default function IntakeWizard({ onPipelineComplete }: IntakeWizardProps) 
     const [uploadFile, setUploadFile] = useState<File | null>(null);
     const [uploadStatus, setUploadStatus] = useState<string | null>(null);
     const [activeStage, setActiveStage] = useState<string | null>(null);
+    const [progressPercent, setProgressPercent] = useState(0);
+    const [progressDesc, setProgressDesc] = useState("");
+    const [currentItem, setCurrentItem] = useState<{ index: number; total: number; category: string; action: string } | null>(null);
     const [error, setError] = useState<string | null>(null);
 
     const legacyMunicipalities = [
@@ -63,9 +67,12 @@ export default function IntakeWizard({ onPipelineComplete }: IntakeWizardProps) 
         if (!uploadFile || !suiteType) return;
         setIsSubmitting(true);
         setError(null);
+        setProgressPercent(0);
+        setProgressDesc("");
+        setCurrentItem(null);
+        setActiveStage("upload");
 
         try {
-            setActiveStage("upload");
             const formData = new FormData();
             formData.append("file", uploadFile);
             formData.append("property_address", address);
@@ -74,34 +81,74 @@ export default function IntakeWizard({ onPipelineComplete }: IntakeWizardProps) 
                 formData.append("laneway_abutment_length", lanewayAbutment);
             }
 
-            // Small delay to show upload stage
-            await new Promise((r) => setTimeout(r, 400));
-            setActiveStage("parse");
-
-            const res = await fetch(`${API_URL}/api/v1/pipeline/run`, {
+            const res = await fetch(`${API_URL}/api/v1/pipeline/stream`, {
                 method: "POST",
                 body: formData,
             });
 
-            setActiveStage("analyze");
-            await new Promise((r) => setTimeout(r, 300));
-            setActiveStage("draft");
-
             if (!res.ok) {
-                const err = await res.json();
+                const err = await res.json().catch(() => ({ detail: "Pipeline failed" }));
                 throw new Error(err.detail || "Pipeline failed");
             }
 
-            const data = await res.json();
-            setUploadStatus("complete");
+            // Read SSE stream
+            const reader = res.body?.getReader();
+            if (!reader) throw new Error("No response stream");
 
-            // Hand off to parent
-            if (onPipelineComplete) {
-                onPipelineComplete(data);
+            const decoder = new TextDecoder();
+            let buffer = "";
+
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+
+                buffer += decoder.decode(value, { stream: true });
+
+                // Parse SSE events from buffer
+                const parts = buffer.split("\n\n");
+                buffer = parts.pop() || "";
+
+                for (const part of parts) {
+                    const lines = part.trim().split("\n");
+                    let eventType = "";
+                    let eventData = "";
+
+                    for (const line of lines) {
+                        if (line.startsWith("event: ")) eventType = line.slice(7);
+                        if (line.startsWith("data: ")) eventData = line.slice(6);
+                    }
+
+                    if (!eventType || !eventData) continue;
+
+                    try {
+                        const payload = JSON.parse(eventData);
+
+                        if (eventType === "progress") {
+                            setActiveStage(payload.stage);
+                            setProgressPercent(payload.percent);
+                            setProgressDesc(payload.description);
+                        } else if (eventType === "item") {
+                            setCurrentItem(payload);
+                        } else if (eventType === "complete") {
+                            setUploadStatus("complete");
+                            setCurrentItem(null);
+                            if (onPipelineComplete) {
+                                onPipelineComplete(payload);
+                            }
+                        } else if (eventType === "error") {
+                            throw new Error(payload.message);
+                        }
+                    } catch (parseErr) {
+                        if (parseErr instanceof Error && parseErr.message !== eventData) {
+                            throw parseErr;
+                        }
+                    }
+                }
             }
         } catch (err: unknown) {
             setError(err instanceof Error ? err.message : "Pipeline failed");
             setActiveStage(null);
+            setCurrentItem(null);
         } finally {
             setIsSubmitting(false);
         }
@@ -371,30 +418,63 @@ export default function IntakeWizard({ onPipelineComplete }: IntakeWizardProps) 
 
                             {/* Pipeline progress indicator */}
                             {isSubmitting && activeStage && (
-                                <div className="mt-4 space-y-2">
-                                    {PIPELINE_STAGES.map((stage, i) => {
-                                        const stageIdx = PIPELINE_STAGES.findIndex(s => s.key === activeStage);
-                                        const isDone = i < stageIdx;
-                                        const isActive = stage.key === activeStage;
-                                        return (
-                                            <div key={stage.key} className="flex items-center gap-3">
-                                                <div className={`w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0 transition-all duration-300 ${isDone ? "bg-emerald-500" : isActive ? "bg-indigo-500 animate-pulse" : "bg-zinc-200 dark:bg-zinc-700"
-                                                    }`}>
-                                                    {isDone && (
-                                                        <svg className="w-3 h-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M5 13l4 4L19 7" />
-                                                        </svg>
-                                                    )}
+                                <div className="mt-4 space-y-3">
+                                    {/* Progress bar */}
+                                    <div className="h-2 w-full bg-zinc-200 dark:bg-zinc-700 rounded-full overflow-hidden">
+                                        <div
+                                            className="h-full bg-gradient-to-r from-blue-500 to-indigo-600 rounded-full transition-all duration-500 ease-out"
+                                            style={{ width: `${progressPercent}%` }}
+                                        />
+                                    </div>
+                                    {progressDesc && (
+                                        <p className="text-xs font-medium text-indigo-600 dark:text-indigo-400">
+                                            {progressDesc}
+                                        </p>
+                                    )}
+
+                                    {/* Stage checklist */}
+                                    <div className="space-y-1.5">
+                                        {PIPELINE_STAGES.map((stage, i) => {
+                                            const stageIdx = PIPELINE_STAGES.findIndex(s => s.key === activeStage);
+                                            const isDone = i < stageIdx;
+                                            const isActive = stage.key === activeStage;
+                                            return (
+                                                <div key={stage.key} className="flex items-center gap-3">
+                                                    <div className={`w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0 transition-all duration-300 ${isDone ? "bg-emerald-500" : isActive ? "bg-indigo-500 animate-pulse" : "bg-zinc-200 dark:bg-zinc-700"
+                                                        }`}>
+                                                        {isDone && (
+                                                            <svg className="w-3 h-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M5 13l4 4L19 7" />
+                                                            </svg>
+                                                        )}
+                                                    </div>
+                                                    <span className={`text-sm transition-colors duration-200 ${isDone ? "text-emerald-600 dark:text-emerald-400 line-through" :
+                                                        isActive ? "text-indigo-600 dark:text-indigo-400 font-semibold" :
+                                                            "text-zinc-400 dark:text-zinc-600"
+                                                        }`}>
+                                                        {stage.label}
+                                                    </span>
                                                 </div>
-                                                <span className={`text-sm transition-colors duration-200 ${isDone ? "text-emerald-600 dark:text-emerald-400 line-through" :
-                                                    isActive ? "text-indigo-600 dark:text-indigo-400 font-semibold" :
-                                                        "text-zinc-400 dark:text-zinc-600"
-                                                    }`}>
-                                                    {stage.label}
+                                            );
+                                        })}
+                                    </div>
+
+                                    {/* Per-item progress */}
+                                    {currentItem && (
+                                        <div className="mt-2 p-3 rounded-lg bg-indigo-50 dark:bg-indigo-950/30 border border-indigo-200 dark:border-indigo-800">
+                                            <div className="flex items-center justify-between text-xs">
+                                                <span className="font-semibold text-indigo-700 dark:text-indigo-300">
+                                                    Item {currentItem.index}/{currentItem.total}
+                                                </span>
+                                                <span className="px-2 py-0.5 rounded-full bg-indigo-100 dark:bg-indigo-900 text-indigo-600 dark:text-indigo-400 font-medium">
+                                                    {currentItem.category}
                                                 </span>
                                             </div>
-                                        );
-                                    })}
+                                            <p className="text-xs text-zinc-600 dark:text-zinc-400 mt-1 truncate">
+                                                {currentItem.action}
+                                            </p>
+                                        </div>
+                                    )}
                                 </div>
                             )}
                         </div>
