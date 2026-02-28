@@ -2,6 +2,8 @@
 
 import React from "react";
 
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+
 interface Citation {
     bylaw: string;
     section: string;
@@ -83,6 +85,8 @@ const CATEGORY_ICONS: Record<string, string> = {
 
 export default function ResultsDashboard({ data }: { data: PipelineResult }) {
     const [expandedIdx, setExpandedIdx] = React.useState<number | null>(null);
+    const [isDownloading, setIsDownloading] = React.useState(false);
+    const [downloadError, setDownloadError] = React.useState<string | null>(null);
 
     const resolvedCount = data.results.filter(
         (r) => r.response?.resolution_status === "RESOLVED"
@@ -93,6 +97,40 @@ export default function ResultsDashboard({ data }: { data: PipelineResult }) {
     const revisionCount = data.results.filter(
         (r) => r.response?.resolution_status === "DRAWING_REVISION_NEEDED"
     ).length;
+
+    const handleDownloadPDF = async () => {
+        setIsDownloading(true);
+        setDownloadError(null);
+        try {
+            const res = await fetch(`${API_URL}/api/v1/export/pdf`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(data),
+            });
+            if (!res.ok) {
+                const err = await res.json().catch(() => ({ detail: "PDF generation failed" }));
+                throw new Error(err.detail || "Export failed");
+            }
+            const blob = await res.blob();
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement("a");
+            link.href = url;
+            const addrSlug = data.property_address
+                .replace(/,/g, "")
+                .replace(/\s+/g, "_")
+                .toLowerCase()
+                .slice(0, 40);
+            link.download = `resubmission_package_${addrSlug}.pdf`;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            URL.revokeObjectURL(url);
+        } catch (err: unknown) {
+            setDownloadError(err instanceof Error ? err.message : "Download failed");
+        } finally {
+            setIsDownloading(false);
+        }
+    };
 
     return (
         <div className="w-full max-w-4xl mx-auto space-y-6">
@@ -107,8 +145,33 @@ export default function ResultsDashboard({ data }: { data: PipelineResult }) {
                             {data.property_address} · {data.suite_type.replace("_", " ")} Suite
                         </p>
                     </div>
-                    <div className="px-4 py-2 rounded-full bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300 text-sm font-semibold">
-                        {data.status}
+                    <div className="flex items-center gap-3">
+                        <button
+                            id="download-pdf-btn"
+                            onClick={handleDownloadPDF}
+                            disabled={isDownloading}
+                            className="px-5 py-2.5 rounded-lg text-sm font-semibold bg-gradient-to-r from-blue-500 to-indigo-600 text-white hover:from-blue-600 hover:to-indigo-700 transition-all shadow-md hover:shadow-lg disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                        >
+                            {isDownloading ? (
+                                <>
+                                    <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
+                                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                                    </svg>
+                                    Generating PDF…
+                                </>
+                            ) : (
+                                <>
+                                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                                    </svg>
+                                    Download PDF
+                                </>
+                            )}
+                        </button>
+                        <div className="px-4 py-2 rounded-full bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300 text-sm font-semibold">
+                            {data.status}
+                        </div>
                     </div>
                 </div>
 
@@ -123,6 +186,13 @@ export default function ResultsDashboard({ data }: { data: PipelineResult }) {
                     <StatCard label="Need Revision" value={revisionCount} color="amber" />
                     <StatCard label="Variance" value={varianceCount} color="red" />
                 </div>
+
+                {/* Download Error Banner */}
+                {downloadError && (
+                    <div className="mt-4 p-3 rounded-lg bg-red-50 border border-red-200 dark:bg-red-950/30 dark:border-red-900/50 text-red-700 dark:text-red-300 text-sm">
+                        <strong>Export Error:</strong> {downloadError}
+                    </div>
+                )}
 
                 {/* Category Breakdown */}
                 <div className="mt-6 flex flex-wrap gap-2">
