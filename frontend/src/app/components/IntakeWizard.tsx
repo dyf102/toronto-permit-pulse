@@ -51,37 +51,13 @@ export default function IntakeWizard({ onPipelineComplete }: IntakeWizardProps) 
 
     const prevStep = () => setStep((prev) => (prev - 1) as WizardStep);
 
-    const handleCreateSession = useCallback(async () => {
-        setIsSubmitting(true);
-        setError(null);
-        try {
-            const res = await fetch(`${API_URL}/api/v1/sessions`, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                    property_address: address,
-                    suite_type: suiteType,
-                    laneway_abutment_length: lanewayAbutment
-                        ? parseFloat(lanewayAbutment)
-                        : null,
-                    pre_approved_plan_number: preApprovedPlan || null,
-                }),
-            });
-
-            if (!res.ok) {
-                const err = await res.json();
-                throw new Error(err.detail || "Failed to create session");
-            }
-
-            const data: { session_id: string; status: string; upload_url: string } = await res.json();
-            setSessionId(data.session_id);
-            setStep(4);
-        } catch (err: unknown) {
-            setError(err instanceof Error ? err.message : "An error occurred");
-        } finally {
-            setIsSubmitting(false);
-        }
-    }, [address, suiteType, lanewayAbutment, preApprovedPlan]);
+    const handleProceedToUpload = useCallback(() => {
+        // Generate a client-side session ID — the pipeline endpoint handles
+        // session creation server-side, so no API call is needed here.
+        const id = crypto.randomUUID();
+        setSessionId(id);
+        setStep(4);
+    }, []);
 
     const handleRunPipeline = useCallback(async () => {
         if (!uploadFile || !suiteType) return;
@@ -129,7 +105,7 @@ export default function IntakeWizard({ onPipelineComplete }: IntakeWizardProps) 
         } finally {
             setIsSubmitting(false);
         }
-    }, [uploadFile, sessionId, address, suiteType, lanewayAbutment, onPipelineComplete]);
+    }, [uploadFile, address, suiteType, lanewayAbutment, onPipelineComplete]);
 
     return (
         <div className="w-full max-w-2xl mx-auto rounded-2xl shadow-2xl bg-white/80 dark:bg-zinc-900/80 backdrop-blur-xl border border-zinc-200 dark:border-zinc-800 overflow-hidden transition-all duration-300">
@@ -451,36 +427,10 @@ export default function IntakeWizard({ onPipelineComplete }: IntakeWizardProps) 
                 ) : step === 3 ? (
                     <button
                         id="proceed-btn"
-                        onClick={handleCreateSession}
-                        disabled={isSubmitting}
-                        className="px-6 py-2.5 rounded-lg text-sm font-semibold bg-gradient-to-r from-blue-500 to-indigo-600 text-white hover:from-blue-600 hover:to-indigo-700 transition-all shadow-md hover:shadow-lg disabled:opacity-50 disabled:cursor-not-allowed"
+                        onClick={handleProceedToUpload}
+                        className="px-6 py-2.5 rounded-lg text-sm font-semibold bg-gradient-to-r from-blue-500 to-indigo-600 text-white hover:from-blue-600 hover:to-indigo-700 transition-all shadow-md hover:shadow-lg"
                     >
-                        {isSubmitting ? (
-                            <span className="flex items-center space-x-2">
-                                <svg
-                                    className="animate-spin h-4 w-4"
-                                    viewBox="0 0 24 24"
-                                >
-                                    <circle
-                                        className="opacity-25"
-                                        cx="12"
-                                        cy="12"
-                                        r="10"
-                                        stroke="currentColor"
-                                        strokeWidth="4"
-                                        fill="none"
-                                    />
-                                    <path
-                                        className="opacity-75"
-                                        fill="currentColor"
-                                        d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
-                                    />
-                                </svg>
-                                <span>Creating Session...</span>
-                            </span>
-                        ) : (
-                            "Proceed to Uploads"
-                        )}
+                        Proceed to Upload
                     </button>
                 ) : null}
             </div>
