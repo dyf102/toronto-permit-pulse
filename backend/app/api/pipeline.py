@@ -7,7 +7,9 @@ import json
 import os
 import queue
 import tempfile
+import logging
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Depends
+from fastapi.encoders import jsonable_encoder
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from uuid import UUID, uuid4
@@ -17,15 +19,16 @@ from app.db.database import get_db
 from app.models.db_models import PermitSessionDB, DeficiencyItemDB
 from app.services.pdf_parser import ExaminerNoticeParserService
 from app.services.orchestrator import OrchestratorService
+from app.services.cache_service import CacheService
+from app.services.security import validate_file, verify_recaptcha
 
 router = APIRouter(prefix="/api/v1", tags=["pipeline"])
-
-GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY", "")
+logger = logging.getLogger(__name__)
 
 
 def _sse_event(event: str, data: dict) -> str:
     """Format a single SSE event."""
-    return f"event: {event}\ndata: {json.dumps(data)}\n\n"
+    return f"event: {event}\ndata: {json.dumps(jsonable_encoder(data))}\n\n"
 
 
 @router.post("/pipeline/run")
@@ -34,6 +37,7 @@ async def run_full_pipeline(
     suite_type: str = Form(...),
     file: UploadFile = File(...),
     laneway_abutment_length: float = Form(None),
+    recaptcha_verified: bool = Depends(verify_recaptcha),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -41,14 +45,10 @@ async def run_full_pipeline(
     parses deficiencies, routes to specialist agents, and returns
     a complete response package.
     """
-    if not GOOGLE_API_KEY:
-        raise HTTPException(
-            status_code=503,
-            detail="GOOGLE_API_KEY not configured. Set it in your environment.",
-        )
+    await validate_file(file)
 
-    if not file.filename or not file.filename.lower().endswith(".pdf"):
-        raise HTTPException(status_code=400, detail="Only PDF files are accepted")
+    # Log start
+    logger.info(f"Starting pipeline for address: {property_address}")
 
     try:
         st = SuiteType(suite_type.upper())
@@ -58,20 +58,28 @@ async def run_full_pipeline(
             detail=f"Invalid suite_type. Must be GARDEN or LANEWAY, got: {suite_type}",
         )
 
+    contents = await file.read()
+    
+    # --- Caching Check ---
+    cache_prefix = f"pipeline:{suite_type}:{property_address}"
+    cached_result = await CacheService.get(db, cache_prefix, contents.decode('latin-1'))
+    if cached_result:
+        logger.info("Returning cached pipeline result.")
+        return cached_result
+
     session = PermitSession(
         property_address=property_address,
         suite_type=st,
         laneway_abutment_length=laneway_abutment_length,
     )
 
-    contents = await file.read()
     with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
         tmp.write(contents)
         tmp_path = tmp.name
 
     try:
         session.status = SessionStatus.PARSING
-        parser = ExaminerNoticeParserService(api_key=GOOGLE_API_KEY)
+        parser = ExaminerNoticeParserService()
         deficiencies = parser.parse_examiner_notice(
             session_id=session.id, pdf_path=tmp_path
         )
@@ -110,10 +118,14 @@ async def run_full_pipeline(
         result["property_address"] = property_address
         result["suite_type"] = suite_type.upper()
 
+        # --- Cache result ---
+        await CacheService.set(db, cache_prefix, contents.decode('latin-1'), result)
+
         return result
 
     except Exception as e:
         session.status = SessionStatus.ERROR
+        logger.exception("Pipeline failed")
         raise HTTPException(status_code=500, detail=f"Pipeline failed: {str(e)}")
     finally:
         os.unlink(tmp_path)
@@ -125,27 +137,14 @@ async def stream_pipeline(
     suite_type: str = Form(...),
     file: UploadFile = File(...),
     laneway_abutment_length: float = Form(None),
+    recaptcha_verified: bool = Depends(verify_recaptcha),
     db: AsyncSession = Depends(get_db),
 ):
     """
     SSE streaming variant of the pipeline. Returns a text/event-stream
     response with real-time progress updates as each stage completes.
-
-    Events emitted:
-      - progress: { stage, description, percent }
-      - item:     { index, total, category, action }
-      - retry:    { attempt, delay, max_retries, reason }
-      - complete: { <full result payload> }
-      - error:    { message }
     """
-    if not GOOGLE_API_KEY:
-        raise HTTPException(
-            status_code=503,
-            detail="GOOGLE_API_KEY not configured. Set it in your environment.",
-        )
-
-    if not file.filename or not file.filename.lower().endswith(".pdf"):
-        raise HTTPException(status_code=400, detail="Only PDF files are accepted")
+    await validate_file(file)
 
     try:
         st = SuiteType(suite_type.upper())
@@ -198,7 +197,7 @@ async def stream_pipeline(
             # --- Stage 2: Parsing ---
             yield _sse_event("progress", {
                 "stage": "parse",
-                "description": "Parsing Examiner's Notice with Gemini Vision…",
+                "description": "Parsing Examiner's Notice with AI Vision…",
                 "percent": 20,
             })
             await asyncio.sleep(0)
@@ -210,7 +209,7 @@ async def stream_pipeline(
             )
             session.status = SessionStatus.PARSING
 
-            parser = ExaminerNoticeParserService(api_key=GOOGLE_API_KEY)
+            parser = ExaminerNoticeParserService()
             loop = asyncio.get_event_loop()
 
             # Pass retry callback so SSE can surface 429 retries to frontend
@@ -266,7 +265,7 @@ async def stream_pipeline(
             from app.services.agents import get_agent_for_deficiency
             from app.services.knowledge_base import KnowledgeBaseService
 
-            kb_service = KnowledgeBaseService(GOOGLE_API_KEY) if GOOGLE_API_KEY else None
+            kb_service = KnowledgeBaseService()
 
             results = []
             unhandled = []
@@ -294,7 +293,7 @@ async def stream_pipeline(
                             context_text = "\n\n".join(chunks)
 
                         response = await loop.run_in_executor(
-                            None, agent.validate, item, context_text
+                            None, agent.validate, item, context_text, _on_retry
                         )
                         results.append({
                             "deficiency": item.dict(),

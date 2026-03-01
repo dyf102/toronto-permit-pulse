@@ -1,4 +1,5 @@
 import asyncio
+import os
 from google import genai
 from google.genai import types
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -7,9 +8,9 @@ from sqlalchemy import select
 from app.models.db_models import KnowledgeChunkDB
 
 class KnowledgeBaseService:
-    def __init__(self, api_key: str):
-        self.api_key = api_key
-        self.client = genai.Client(api_key=api_key)
+    def __init__(self):
+        api_key = os.getenv("GOOGLE_API_KEY", "")
+        self.client = genai.Client(api_key=api_key) if api_key else None
 
     async def get_embedding(self, text: str) -> list[float]:
         res = await asyncio.to_thread(

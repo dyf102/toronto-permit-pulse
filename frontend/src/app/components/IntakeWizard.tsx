@@ -1,14 +1,16 @@
 "use client";
 
-import React, { useState, useCallback } from "react";
+import React, { useState, useCallback, useRef } from "react";
+import ReCAPTCHA from "react-google-recaptcha";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+const RECAPTCHA_SITE_KEY = process.env.NEXT_PUBLIC_RECAPTCHA_SITE_KEY || "";
 
 type WizardStep = 1 | 2 | 3 | 4;
 
 const PIPELINE_STAGES = [
     { key: "upload", label: "Uploading PDF" },
-    { key: "parse", label: "Parsing Notice (Gemini Vision)" },
+    { key: "parse", label: "Parsing Notice (AI Vision)" },
     { key: "analyze", label: "Analyzing Deficiencies" },
     { key: "draft", label: "Packaging Responses" },
     { key: "complete", label: "Complete" },
@@ -36,6 +38,10 @@ export default function IntakeWizard({ onPipelineComplete }: IntakeWizardProps) 
     const [progressDesc, setProgressDesc] = useState("");
     const [currentItem, setCurrentItem] = useState<{ index: number; total: number; category: string; action: string } | null>(null);
     const [error, setError] = useState<string | null>(null);
+    
+    // Security state
+    const recaptchaRef = useRef<ReCAPTCHA>(null);
+    const [recaptchaToken, setRecaptchaToken] = useState<string | null>(null);
 
     const legacyMunicipalities = [
         "etobicoke",
@@ -56,8 +62,6 @@ export default function IntakeWizard({ onPipelineComplete }: IntakeWizardProps) 
     const prevStep = () => setStep((prev) => (prev - 1) as WizardStep);
 
     const handleProceedToUpload = useCallback(() => {
-        // Generate a client-side session ID — the pipeline endpoint handles
-        // session creation server-side, so no API call is needed here.
         const id = crypto.randomUUID();
         setSessionId(id);
         setStep(4);
@@ -65,6 +69,14 @@ export default function IntakeWizard({ onPipelineComplete }: IntakeWizardProps) 
 
     const handleRunPipeline = useCallback(async () => {
         if (!uploadFile || !suiteType) return;
+        
+        // reCAPTCHA is mandatory in production (enforced by backend)
+        // Here we just warn the user if they missed it
+        if (!recaptchaToken && RECAPTCHA_SITE_KEY) {
+            setError("Please complete the reCAPTCHA verification.");
+            return;
+        }
+
         setIsSubmitting(true);
         setError(null);
         setProgressPercent(0);
@@ -79,6 +91,9 @@ export default function IntakeWizard({ onPipelineComplete }: IntakeWizardProps) 
             formData.append("suite_type", suiteType);
             if (lanewayAbutment) {
                 formData.append("laneway_abutment_length", lanewayAbutment);
+            }
+            if (recaptchaToken) {
+                formData.append("recaptcha_token", recaptchaToken);
             }
 
             const res = await fetch(`${API_URL}/api/v1/pipeline/stream`, {
@@ -104,7 +119,6 @@ export default function IntakeWizard({ onPipelineComplete }: IntakeWizardProps) 
 
                 buffer += decoder.decode(value, { stream: true });
 
-                // Parse SSE events from buffer
                 const parts = buffer.split("\n\n");
                 buffer = parts.pop() || "";
 
@@ -131,7 +145,7 @@ export default function IntakeWizard({ onPipelineComplete }: IntakeWizardProps) 
                             setCurrentItem(payload);
                         } else if (eventType === "retry") {
                             setProgressDesc(
-                                `⏳ Rate limited — retrying in ${Math.ceil(payload.delay)}s (attempt ${payload.attempt}/${payload.max_retries})…`
+                                `⏳ Rate limited — retrying in ${Math.ceil(payload.delay)}s…`
                             );
                         } else if (eventType === "complete") {
                             setUploadStatus("complete");
@@ -153,10 +167,13 @@ export default function IntakeWizard({ onPipelineComplete }: IntakeWizardProps) 
             setError(err instanceof Error ? err.message : "Pipeline failed");
             setActiveStage(null);
             setCurrentItem(null);
+            // Reset reCAPTCHA on error so they can try again
+            recaptchaRef.current?.reset();
+            setRecaptchaToken(null);
         } finally {
             setIsSubmitting(false);
         }
-    }, [uploadFile, address, suiteType, lanewayAbutment, onPipelineComplete]);
+    }, [uploadFile, address, suiteType, lanewayAbutment, recaptchaToken, onPipelineComplete]);
 
     return (
         <div className="w-full max-w-2xl mx-auto rounded-2xl shadow-2xl bg-white/80 dark:bg-zinc-900/80 backdrop-blur-xl border border-zinc-200 dark:border-zinc-800 overflow-hidden transition-all duration-300">
@@ -362,17 +379,6 @@ export default function IntakeWizard({ onPipelineComplete }: IntakeWizardProps) 
                             Toronto Building.
                         </p>
 
-                        {sessionId && (
-                            <div className="p-3 rounded-lg bg-indigo-50 dark:bg-indigo-950/30 border border-indigo-200 dark:border-indigo-800 text-sm">
-                                <span className="font-semibold text-indigo-700 dark:text-indigo-300">
-                                    Session:
-                                </span>{" "}
-                                <code className="text-indigo-600 dark:text-indigo-400">
-                                    {sessionId}
-                                </code>
-                            </div>
-                        )}
-
                         <div className="space-y-4">
                             <label
                                 htmlFor="pdf-upload"
@@ -392,7 +398,7 @@ export default function IntakeWizard({ onPipelineComplete }: IntakeWizardProps) 
                                     />
                                 </svg>
                                 <span className="text-sm text-zinc-600 dark:text-zinc-400">
-                                    {uploadFile ? uploadFile.name : "Click to select PDF (max 250 MB)"}
+                                    {uploadFile ? uploadFile.name : "Click to select PDF (max 10 MB)"}
                                 </span>
                                 <input
                                     id="pdf-upload"
@@ -401,7 +407,13 @@ export default function IntakeWizard({ onPipelineComplete }: IntakeWizardProps) 
                                     className="hidden"
                                     onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
                                         if (e.target.files && e.target.files[0]) {
-                                            setUploadFile(e.target.files[0]);
+                                            const file = e.target.files[0];
+                                            if (file.size > 10 * 1024 * 1024) {
+                                                setError("File too large. Maximum size is 10MB.");
+                                                setUploadFile(null);
+                                                return;
+                                            }
+                                            setUploadFile(file);
                                             setUploadStatus(null);
                                             setError(null);
                                         }
@@ -409,11 +421,23 @@ export default function IntakeWizard({ onPipelineComplete }: IntakeWizardProps) 
                                 />
                             </label>
 
+                            {/* reCAPTCHA widget */}
+                            {uploadFile && !uploadStatus && RECAPTCHA_SITE_KEY && (
+                                <div className="flex justify-center py-2">
+                                    <ReCAPTCHA
+                                        ref={recaptchaRef}
+                                        sitekey={RECAPTCHA_SITE_KEY}
+                                        onChange={(token) => setRecaptchaToken(token)}
+                                        theme="light"
+                                    />
+                                </div>
+                            )}
+
                             {uploadFile && !uploadStatus && (
                                 <button
                                     id="upload-btn"
                                     onClick={handleRunPipeline}
-                                    disabled={isSubmitting}
+                                    disabled={isSubmitting || (!!RECAPTCHA_SITE_KEY && !recaptchaToken)}
                                     className="w-full px-6 py-3 rounded-lg text-sm font-semibold bg-gradient-to-r from-blue-500 to-indigo-600 text-white hover:from-blue-600 hover:to-indigo-700 transition-all shadow-md hover:shadow-lg disabled:opacity-50 disabled:cursor-not-allowed"
                                 >
                                     {isSubmitting ? "Running Analysis..." : "Upload & Run AI Analysis"}
@@ -423,7 +447,6 @@ export default function IntakeWizard({ onPipelineComplete }: IntakeWizardProps) 
                             {/* Pipeline progress indicator */}
                             {isSubmitting && activeStage && (
                                 <div className="mt-4 space-y-3">
-                                    {/* Progress bar */}
                                     <div className="h-2 w-full bg-zinc-200 dark:bg-zinc-700 rounded-full overflow-hidden">
                                         <div
                                             className="h-full bg-gradient-to-r from-blue-500 to-indigo-600 rounded-full transition-all duration-500 ease-out"
@@ -462,23 +485,6 @@ export default function IntakeWizard({ onPipelineComplete }: IntakeWizardProps) 
                                             );
                                         })}
                                     </div>
-
-                                    {/* Per-item progress */}
-                                    {currentItem && (
-                                        <div className="mt-2 p-3 rounded-lg bg-indigo-50 dark:bg-indigo-950/30 border border-indigo-200 dark:border-indigo-800">
-                                            <div className="flex items-center justify-between text-xs">
-                                                <span className="font-semibold text-indigo-700 dark:text-indigo-300">
-                                                    Item {currentItem.index}/{currentItem.total}
-                                                </span>
-                                                <span className="px-2 py-0.5 rounded-full bg-indigo-100 dark:bg-indigo-900 text-indigo-600 dark:text-indigo-400 font-medium">
-                                                    {currentItem.category}
-                                                </span>
-                                            </div>
-                                            <p className="text-xs text-zinc-600 dark:text-zinc-400 mt-1 truncate">
-                                                {currentItem.action}
-                                            </p>
-                                        </div>
-                                    )}
                                 </div>
                             )}
                         </div>

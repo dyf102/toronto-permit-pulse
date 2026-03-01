@@ -144,3 +144,4 @@ vite.config.ts.timestamp-*
 .vite/
 .prd.env
 .env
+\n# OS files\n.DS_Store\n**/.DS_Store

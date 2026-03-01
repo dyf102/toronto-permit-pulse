@@ -8,8 +8,12 @@ import json
 from typing import List, Optional
 from abc import ABC, abstractmethod
 
-from google import genai
-from google.genai import types as genai_types
+import os
+import json
+import logging
+from typing import List, Optional
+from abc import ABC, abstractmethod
+
 from pydantic import BaseModel
 
 from app.models.domain import (
@@ -19,52 +23,34 @@ from app.models.domain import (
     ResolutionStatus,
     DeficiencyCategory,
 )
-from app.services.gemini_retry import retry_gemini_call
+from app.services.llm_provider import get_llm_provider
 
-
-
-class AgentResult(BaseModel):
-    """Structured output from a validator agent."""
-    draft_text: str
-    resolution_status: str
-    citations: List[dict] = []
-    variance_magnitude: Optional[str] = None
-    reasoning: str
-
+logger = logging.getLogger(__name__)
 
 class BaseValidatorAgent(ABC):
     """Base class for all specialized validator agents."""
 
-    def __init__(self, model: str = "gemini-2.5-flash"):
-        self._model = model
-        self._client = None
+    def __init__(self, model: Optional[str] = None):
+        self._provider = get_llm_provider()
+        if model:
+             # Override if specific model requested
+             os.environ["LLM_MODEL"] = model
+             self._provider = get_llm_provider()
 
-    def _get_client(self):
-        """Lazy initialization — only configure SDK when needed."""
-        if self._client is None:
-            api_key = os.getenv("GOOGLE_API_KEY", "")
-            if not api_key:
-                raise RuntimeError("GOOGLE_API_KEY not set")
-            self._client = genai.Client(api_key=api_key)
-        return self._client
-
-    def _generate(self, prompt: str) -> str:
-        client = self._get_client()
-
-        def _call():
-            return client.models.generate_content(
-                model=self._model,
-                contents=prompt,
-                config=genai_types.GenerateContentConfig(temperature=0.1),
-            )
-
-        response = retry_gemini_call(
-            _call,
-            on_retry=lambda attempt, delay, reason: print(
-                f"[{self.agent_name}] {reason} — retrying in {delay:.1f}s"
-            ),
+    def _generate(self, prompt: str, on_retry: Optional[Callable] = None) -> str:
+        if os.getenv("ENVIRONMENT") == "development":
+            logger.debug(f"[{self.agent_name}] PROMPT:\n{prompt}")
+        
+        content = self._provider.generate_content(
+            prompt=prompt,
+            system_prompt=self.system_prompt,
+            on_retry=on_retry
         )
-        return response.text.strip()
+
+        if os.getenv("ENVIRONMENT") == "development":
+            logger.debug(f"[{self.agent_name}] RESPONSE:\n{content}")
+            
+        return content
 
     @property
     @abstractmethod
@@ -85,12 +71,10 @@ class BaseValidatorAgent(ABC):
     def can_handle(self, item: DeficiencyItem) -> bool:
         return item.category in self.categories
 
-    def validate(self, item: DeficiencyItem, retrieved_context: str = "") -> GeneratedResponse:
+    def validate(self, item: DeficiencyItem, retrieved_context: str = "", on_retry: Optional[Callable] = None) -> GeneratedResponse:
         context_block = f"\n**Relevant By-law/Code Context:**\n{retrieved_context}\n" if retrieved_context else ""
         
-        prompt = f"""{self.system_prompt}
-
-Analyze the following deficiency from an Examiner's Notice and draft a correction response.
+        prompt = f"""Analyze the following deficiency from an Examiner's Notice and draft a correction response.
 {context_block}
 **Deficiency Text:**
 {item.raw_notice_text}
@@ -105,7 +89,7 @@ Respond ONLY with a valid JSON object (no markdown fences) containing:
 - "variance_magnitude": If variance needed, describe the magnitude (e.g., "0.3m over maximum height"), else null
 - "reasoning": Your internal reasoning for this response"""
 
-        content = self._generate(prompt)
+        content = self._generate(prompt, on_retry=on_retry)
 
         # Strip any accidental markdown fences
         if content.startswith("```"):

@@ -12,12 +12,36 @@ from app.models.db_models import PermitSessionDB, DeficiencyItemDB
 
 from sqlalchemy import text
 
+import logging
+import sys
+
+# Configure logging
+LOG_LEVEL = os.getenv("LOG_LEVEL", "DEBUG" if os.getenv("ENVIRONMENT") == "development" else "INFO")
+logging.basicConfig(
+    level=LOG_LEVEL,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    stream=sys.stdout,
+)
+logger = logging.getLogger(__name__)
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Check for GOOGLE_API_KEY on startup
+    api_key = os.getenv("GOOGLE_API_KEY")
+    if not api_key:
+        logger.error("FATAL: GOOGLE_API_KEY is not set in the environment.")
+        # In production, we might want to exit. In dev, we show a big warning.
+        if os.getenv("ENVIRONMENT") != "development":
+             sys.exit(1)
+        else:
+             logger.warning("Running in DEVELOPMENT mode without GOOGLE_API_KEY. Pipeline will fail.")
+
     # Initialize DB tables on startup
     async with engine.begin() as conn:
+        logger.info("Initializing database tables...")
         await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector;"))
         await conn.run_sync(Base.metadata.create_all)
+        logger.info("Database initialization complete.")
     yield
 
 app = FastAPI(

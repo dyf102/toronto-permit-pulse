@@ -2,21 +2,19 @@ import fitz  # PyMuPDF
 import json
 import uuid
 import os
+import logging
 from io import BytesIO
-from typing import List
+from typing import List, Optional, Callable
 from uuid import UUID, uuid4
 
-from google import genai
-from google.genai import types
-
 from app.models.domain import DeficiencyCategory, DeficiencyItem
-from app.services.gemini_retry import retry_gemini_call
+from app.services.llm_provider import get_llm_provider
 
+logger = logging.getLogger(__name__)
 
 class ExaminerNoticeParserService:
-    def __init__(self, api_key: str):
-        self.client = genai.Client(api_key=api_key)
-        self.model = "gemini-2.5-flash"
+    def __init__(self, api_key: Optional[str] = None):
+        self.provider = get_llm_provider()
 
     def extract_text_from_pdf(self, pdf_path: str) -> str:
         """Extracts raw text from an Examiner's Notice PDF using PyMuPDF."""
@@ -30,53 +28,24 @@ class ExaminerNoticeParserService:
         return "\n".join(full_text)
 
     def parse_examiner_notice(
-        self, session_id: UUID, pdf_path: str, on_retry=None
+        self, session_id: UUID, pdf_path: str, on_retry: Optional[Callable] = None
     ) -> List[DeficiencyItem]:
-        return [DeficiencyItem(
-            id=uuid4(),
-            session_id=session_id,
-            category=DeficiencyCategory.ZONING,
-            raw_notice_text="The garden suite has a height of 5.5m which does not conform to the By-Law requirements.",
-            extracted_action="Revise drawings to reduce height to comply with By-Law 569-2013.",
-            agent_confidence=1.0,
-        )]
         """
-        Extracts text from PDF and uses Gemini to structure the deficiencies.
-        Returns a list of DeficiencyItem objects.
-
-        Args:
-            on_retry: Optional callback(attempt, delay, reason) passed to retry_gemini_call.
+        Extracts text from PDF and uses LLM to structure the deficiencies.
         """
         raw_text = self.extract_text_from_pdf(pdf_path)
+        
+        system_prompt = "You are an expert at parsing City of Toronto Building Examiner's Notices."
+        prompt = f"""Extract every deficiency item from the notice text below.
 
-        prompt = f"""You are an expert at parsing City of Toronto Building Examiner's Notices.
-
-Extract every deficiency item from the notice text below.
-
-Return a JSON array (not an object, just an array) of deficiency items. Each item must have:
+Return a JSON array of deficiency items. Each item must have:
 - "category": one of exactly: ZONING, OBC, FIRE_ACCESS, TREE_PROTECTION, LANDSCAPING, SERVICING, OTHER
 - "raw_notice_text": the full original text of the deficiency as written in the notice
 - "extracted_action": a concise 1-2 sentence summary of what the applicant must do to resolve it
 
 Rules:
 - Return ONLY the JSON array, no markdown, no code fences, no explanation
-- If a section heading (e.g. "SECTION A — ZONING") contains multiple sub-items (e.g. A-1, A-2), extract each sub-item separately
 - Map section letters to categories: A/Zoning→ZONING, B/OBC/Building Code→OBC, C/Tree→TREE_PROTECTION, D/Fire→FIRE_ACCESS, E/Landscape→LANDSCAPING, F/Servicing→SERVICING
-- If you cannot determine the category, use OTHER
-
-Example output format:
-[
-  {{
-    "category": "ZONING",
-    "raw_notice_text": "A-1 — Maximum Building Height...(full text)...",
-    "extracted_action": "Reduce ridge height from 6.8m to comply with 6.0m maximum, or apply for minor variance."
-  }},
-  {{
-    "category": "OBC",
-    "raw_notice_text": "B-1 — Spatial Separation...(full text)...",
-    "extracted_action": "Remove west wall window or provide fire-rated glazing details for limiting distance compliance."
-  }}
-]
 
 Here is the Examiner's Notice text:
 <notice>
@@ -85,21 +54,17 @@ Here is the Examiner's Notice text:
 
 Return only the JSON array:"""
 
-        def _call_gemini():
-            return self.client.models.generate_content(
-                model=self.model,
-                contents=prompt,
-                config=genai_types.GenerateContentConfig(temperature=0.0),
-            )
+        if os.getenv("ENVIRONMENT") == "development":
+            logger.debug(f"[parser] PROMPT:\n{prompt[:1000]}...")
 
-        response = retry_gemini_call(
-            _call_gemini,
-            on_retry=on_retry or (lambda attempt, delay, reason: print(
-                f"[parser] {reason} — retrying in {delay:.1f}s"
-            )),
+        content = self.provider.generate_content(
+            prompt=prompt,
+            system_prompt=system_prompt,
+            on_retry=on_retry
         )
 
-        content = response.text.strip()
+        if os.getenv("ENVIRONMENT") == "development":
+            logger.debug(f"[parser] RESPONSE:\n{content[:1000]}...")
 
         # Strip any accidental markdown fences
         if content.startswith("```"):

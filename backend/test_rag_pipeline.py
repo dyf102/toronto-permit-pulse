@@ -5,7 +5,7 @@ import json
 def test():
     print("Testing pipeline/run...")
     url = "http://localhost:8000/api/v1/pipeline/run"
-    
+
     data = {
         "property_address": "123 RAG Test St",
         "suite_type": "GARDEN",
