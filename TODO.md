@@ -13,7 +13,7 @@ This document tracks known limitations, technical debt, and planned improvements
 
 ## 🟡 Medium Priority (Geographic & Regulatory Scope)
 
-- [x] **Legacy Case Boundary Detection:** Refine frontend wizard to detect Annex/Yorkville exclusion zones and high-risk legacy boundaries (Waterfront, Railway Lands). (Effort: **Small**, Created: 2026-03-01, Completed: 2026-03-01)
+- [x] **Legacy Case Boundary Detection:** Refine frontend wizard to detect Annex/Yorkville exclusion zones and high-risk legacy boundaries (Waterfront, Railway Lands). (Effort: **Small**, Created: 2026-03-01, Completed: 2026-03-01, PR: 0cb25a3)
 - [ ] **Legacy Zoning API Integration:** Replace keyword-based detection in `IntakeWizard.tsx` with a Latitude/Longitude lookup against the Toronto Open Data Zoning By-law Index. (Effort: **Medium**, Created: 2026-03-01)
 - [ ] **Annex/Yorkville Logic:** Implement specific validation logic for By-law 438-86 to support the Annex/Yorkville exclusion zones instead of just blocking them. (Effort: **Large**, Created: 2026-03-01)
 - [ ] **Former Municipality Ingestion:** Ingest the core zoning codes for Etobicoke (No. 7625), North York, and Scarborough into the RAG Knowledge Base. (Effort: **Large**, Created: 2026-03-01)
@@ -28,8 +28,8 @@ This document tracks known limitations, technical debt, and planned improvements
 
 ## 🛠️ Technical Debt
 
-- [x] **Python 3.11 Environment Standardization:** Upgrade the local virtual environment from 3.9 to 3.11 to match the production Docker container. (Effort: **Small**, Created: 2026-03-01, Completed: 2026-03-01)
-- [x] **Modernize Backend Syntax:** Refactor backend files to use `| None` instead of `Optional[]` and `list[]` instead of `List[]`. (Effort: **Small**, Created: 2026-03-01, Completed: 2026-03-01)
+- [x] **Python 3.11 Environment Standardization:** Upgrade the local virtual environment from 3.9 to 3.11 to match the production Docker container. (Effort: **Small**, Created: 2026-03-01, Completed: 2026-03-01, PR: 0cb25a3)
+- [x] **Modernize Backend Syntax:** Refactor backend files to use `| None` instead of `Optional[]` and `list[]` instead of `List[]`. (Effort: **Small**, Created: 2026-03-01, Completed: 2026-03-01, PR: 0cb25a3)
 - [ ] **Recursive RAG Latency:** The current recursive retrieval adds ~2-3 seconds to the processing loop. Optimize SQLAlchemy queries to use JSONB indexing for parent-child lookups. (Effort: **Medium**, Created: 2026-03-01)
 - [ ] **Mock Data Cleanup:** Revert `eval_pipeline.py` mock responses once real-world benchmark data is fully integrated. (Effort: **Small**, Created: 2026-03-01)
 - [ ] **Rate Limit Resilience:** Transition from simple `time.sleep()` to a robust task queue (Celery/Redis) for managing Gemini/Claude API quotas. (Effort: **Medium**, Created: 2026-03-01)
