@@ -1,11 +1,12 @@
 import asyncio
 import os
+import re
 import glob
 import fitz  # PyMuPDF
 from google import genai
 from google.genai import types
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, delete
 
 import sys
 from pathlib import Path
@@ -24,18 +25,58 @@ if not API_KEY:
 
 client = genai.Client(api_key=API_KEY)
 
-def chunk_text(text: str, chunk_size=1000, overlap=100):
-    """Splits text into chunks with a fixed overlap."""
+def chunk_by_section(text: str):
+    """
+    Splits text into chunks based on markdown headers (##, ###).
+    Returns a list of dictionaries with content and metadata.
+    """
+    # Regex to find section headers like ## 150.8.20 Setbacks
+    # or ### (1) Definition
+    lines = text.split('\n')
     chunks = []
-    start = 0
-    text_len = len(text)
-    while start < text_len:
-        end = start + chunk_size
-        chunk = text[start:end]
-        chunks.append(chunk)
-        if end >= text_len:
-            break
-        start = end - overlap
+    current_section = "General"
+    current_subsection = ""
+    current_content = []
+    
+    section_pattern = re.compile(r'^##\s+([\d\.]+)\s+(.*)')
+    subsection_pattern = re.compile(r'^###\s+\(([\d\w]+)\)\s+(.*)')
+
+    for line in lines:
+        section_match = section_pattern.match(line)
+        subsection_match = subsection_pattern.match(line)
+        
+        if section_match:
+            # Save previous chunk
+            if current_content:
+                chunks.append({
+                    "content": '\n'.join(current_content).strip(),
+                    "section": current_section,
+                    "subsection": current_subsection
+                })
+            current_section = section_match.group(1)
+            current_subsection = ""
+            current_content = [line]
+        elif subsection_match:
+            # Save previous chunk if it has content beyond the header
+            if current_content:
+                chunks.append({
+                    "content": '\n'.join(current_content).strip(),
+                    "section": current_section,
+                    "subsection": current_subsection
+                })
+            current_subsection = subsection_match.group(1)
+            current_content = [line]
+        else:
+            current_content.append(line)
+            
+    # Add final chunk
+    if current_content:
+        chunks.append({
+            "content": '\n'.join(current_content).strip(),
+            "section": current_section,
+            "subsection": current_subsection
+        })
+        
     return chunks
 
 def extract_text_from_file(file_path: str) -> str:
@@ -64,38 +105,42 @@ async def generate_embedding(text: str) -> list[float]:
     return res.embeddings[0].values
 
 async def ingest_file(file_path: str, session: AsyncSession):
-    """Ingest a single file."""
+    """Ingest a single file using section-aware chunking."""
     print(f"Processing: {file_path}")
     file_name = os.path.basename(file_path)
 
-    # Check if already ingested using an exact match query
-    stmt = select(KnowledgeChunkDB).where(KnowledgeChunkDB.file_name == file_name).limit(1)
-    result = await session.execute(stmt)
-    if result.scalar_one_or_none():
-        print(f"File {file_name} already ingested. Skipping.")
-        return
+    # For development, we delete existing chunks for this file to allow re-ingestion with new logic
+    stmt_del = delete(KnowledgeChunkDB).where(KnowledgeChunkDB.file_name == file_name)
+    await session.execute(stmt_del)
 
     text = extract_text_from_file(file_path)
     if not text.strip():
         print(f"Skipping {file_name} because it's empty or unsupported.")
         return
 
-    chunks = chunk_text(text)
-    print(f"Generated {len(chunks)} chunks for {file_name}.")
+    chunks = chunk_by_section(text)
+    print(f"Generated {len(chunks)} section-based chunks for {file_name}.")
 
-    for idx, chunk_str in enumerate(chunks):
-        embedding = await generate_embedding(chunk_str)
+    for idx, chunk_data in enumerate(chunks):
+        content = chunk_data["content"]
+        if not content.strip(): continue
+        
+        embedding = await generate_embedding(content)
         chunk_db = KnowledgeChunkDB(
             file_name=file_name,
             chunk_index=idx,
-            content=chunk_str,
-            metadata_json={"source": file_name, "chunk": idx},
+            content=content,
+            metadata_json={
+                "source": file_name, 
+                "section": chunk_data["section"],
+                "subsection": chunk_data["subsection"]
+            },
             embedding=embedding
         )
         session.add(chunk_db)
 
     await session.commit()
-    print(f"Successfully ingested {file_name}.")
+    print(f"Successfully ingested {file_name} with section metadata.")
 
 async def main():
     data_dir = os.path.join(backend_dir, "data")

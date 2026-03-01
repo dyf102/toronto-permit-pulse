@@ -116,9 +116,36 @@ def run_sample_evals():
         "agent_reasoning": "I think it's okay."
     }
 
+    # A "P.Eng. Optimized" response (matches the new technical rigor requirements)
+    mock_peng_response = {
+        "draft_text": """The site plan has been revised to reduce the laneway suite footprint to comply with the maximum coverage requirements. 
+
+TECHNICAL COMPLIANCE MATRIX (By-law 569-2013):
+- Mandatory Cap (150.8.60.20(1)(B)): 45.0 m² 
+- Area-Based Limit (150.8.60.20(1)(A)): 30% of lot area (30% of 160m² = 48.0 m²)
+- Permitted Limit: Lesser of above = 45.0 m²
+- Proposed Footprint: 44.5 m²
+- Result: COMPLIANT
+
+Please refer to revised Site Plan (Sheet A101) and updated Zoning Matrix.""",
+        "resolution_status": "DRAWING_REVISION_NEEDED",
+        "citations": [
+            {"bylaw": "569-2013", "section": "150.8.60.1", "version": "Current"},
+            {"bylaw": "569-2013", "section": "150.8.60.20", "version": "Current"}
+        ],
+        "agent_reasoning": "Identified the 'lesser of' dual-constraint. The 45sqm cap is the governing limit for this lot size. Cited both general lot coverage and specific laneway floor area sections."
+    }
+
     print("--- Running Evaluation on GOOD Response ---")
     good_result = evaluator.evaluate_response(mock_deficiency, mock_good_response, mock_gold_citations)
     print(json.dumps(good_result, indent=2))
+
+    print("\nWaiting 20 seconds before next evaluation...")
+    time.sleep(20)
+
+    print("\n--- Running Evaluation on P.ENG. OPTIMIZED Response ---")
+    peng_result = evaluator.evaluate_response(mock_deficiency, mock_peng_response, mock_gold_citations)
+    print(json.dumps(peng_result, indent=2))
 
     print("\nWaiting 20 seconds before next evaluation...")
     time.sleep(20)

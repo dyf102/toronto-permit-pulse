@@ -56,6 +56,17 @@ class OrchestratorService:
                         None, agent.validate, item, context_text
                     )
                     
+                    # Audit step: Ensure technical rigor
+                    from app.services.agents import ReviewerAgent
+                    auditor = ReviewerAgent()
+                    audit_result = await loop.run_in_executor(
+                        None, auditor.audit, item, response.draft_text, context_text
+                    )
+                    
+                    if audit_result.get("status") == "REJECT_AND_REVISE" and audit_result.get("revised_draft"):
+                        response.draft_text = audit_result["revised_draft"]
+                        response.reasoning = f"{response.reasoning}\n\n[AUDIT FEEDBACK]: {audit_result.get('feedback')}"
+
                     results.append({
                         "deficiency": item.dict(),
                         "response": response.dict(),
