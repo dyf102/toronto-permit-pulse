@@ -1,0 +1,38 @@
+{
+  "eval_session_date": "2026-03-01",
+  "evaluator_persona": "Senior P.Eng. (10+ YEO)",
+  "model_used": "gemini-3-flash-preview",
+  "key_findings": [
+    {
+      "issue": "Missing Dual-Constraint Knowledge",
+      "detail": "AI correctly identified Section 150.8.60.20 (30% coverage) but missed the 45.0sqm absolute footprint cap mandated by 150.8.60.20(1)(B).",
+      "impact": "High. Responses would be rejected for large lots where 30% exceeds 45sqm."
+    },
+    {
+      "issue": "Primary Citation Omission",
+      "detail": "AI missed Section 150.8.60.1 (General Lot Coverage), citing only the specific laneway section.",
+      "impact": "Moderate. Professional responses require citing the primary regulatory trigger."
+    },
+    {
+      "issue": "Lack of Quantitative Data",
+      "detail": "AI provided qualitative 'it was reduced' responses rather than quantitative 'Footprint reduced from X to Y' data.",
+      "impact": "High. City examiners require data-driven proof of compliance."
+    }
+  ],
+  "raw_results": {
+    "good_response_eval": {
+      "citation_accuracy": 6,
+      "completeness": 4,
+      "professional_tone": 7,
+      "overall_pass": false,
+      "feedback": "The response is technically insufficient for a Toronto Building permit resubmission. 1) Citation Error: While 150.8.60.20 was cited, the response failed to include 150.8.60.1 (Lot Coverage - General), which is the primary regulatory trigger. 2) Technical Inaccuracy: The response mentions a '30% lot coverage requirement' but fails to acknowledge the critical dual-constraint in Section 150.8.60.20(1), which limits a Laneway Suite to the lesser of 30% of the lot area or 45.0 square metres. If the lot is large, the 45sqm cap is usually the governing factor; ignoring this in a response is a major oversight. 3) Lack of Detail: A professional response must provide the specific revised GFA/Footprint in square metres and the resulting percentage to demonstrate compliance on the face of the letter. Simply stating it was 'reduced' will likely result in a further request for information (RFI) from the examiner."
+    },
+    "bad_response_eval": {
+      "citation_accuracy": 0,
+      "completeness": 0,
+      "professional_tone": 0,
+      "overall_pass": false,
+      "feedback": "The response is a total failure and professionally negligent. 1) Citation Accuracy: The response cites a fabricated 'Fake-Bylaw' and section '999.1' instead of the mandatory Toronto Zoning By-law 569-2013, Section 150.8.60.1 (Lot Coverage) or 150.8.60.20 (Maximum Floor Area). 2) Completeness: The examiner explicitly requested a revised site plan showing compliance; stating 'the lot coverage is fine' without providing a revised GFA/Lot Coverage calculation table or updated architectural drawings is a guaranteed rejection. 3) Professional Tone: The reasoning 'I think it's okay' is dismissive and lacks the technical rigor required for a City of Toronto building permit application. This response would result in an immediate 'Incomplete' status and significant project delays."
+    }
+  }
+}

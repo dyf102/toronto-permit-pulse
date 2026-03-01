@@ -15,7 +15,7 @@ class LLMProvider(ABC):
         pass
 
 class GeminiProvider(LLMProvider):
-    def __init__(self, model: str = "gemini-2.5-flash"):
+    def __init__(self, model: str = "gemini-3-flash-preview"):
         self.model = model
         api_key = os.getenv("GOOGLE_API_KEY", "")
         self.client = genai.Client(api_key=api_key) if api_key else None
@@ -27,9 +27,7 @@ class GeminiProvider(LLMProvider):
         def _call():
             contents = prompt
             if system_prompt:
-                contents = f"{system_prompt}
-
-{prompt}"
+                contents = f"{system_prompt}\\n\\n{prompt}"
             
             return self.client.models.generate_content(
                 model=self.model,
@@ -62,7 +60,9 @@ class OpenRouterProvider(LLMProvider):
         messages.append({"role": "user", "content": prompt})
 
         # Simplified retry for OpenRouter (can be improved)
-        for attempt in range(3):
+        # In development mode, retries are disabled to fail fast.
+        max_attempts = 1 if os.getenv("ENVIRONMENT") == "development" else 3
+        for attempt in range(max_attempts):
             try:
                 response = self.client.chat.completions.create(
                     model=self.model,
@@ -72,19 +72,21 @@ class OpenRouterProvider(LLMProvider):
                 return response.choices[0].message.content.strip()
             except Exception as e:
                 logger.warning(f"OpenRouter attempt {attempt+1} failed: {e}")
-                if attempt == 2: raise
+                if attempt == max_attempts - 1: raise
                 import time
                 time.sleep(2 ** attempt)
         return ""
 
 def get_llm_provider() -> LLMProvider:
-    provider_type = os.getenv("LLM_PROVIDER", "gemini").lower()
+    provider_type = os.getenv("LLM_PROVIDER", "openrouter").lower()
     model = os.getenv("LLM_MODEL")
 
     if provider_type == "gemini":
-        return GeminiProvider(model=model or "gemini-2.5-flash")
+        if model == "gemini-3.1-pro-preview":
+            return GeminiProvider(model=model)
+        return GeminiProvider(model=model or "gemini-3-flash-preview")
     elif provider_type == "openrouter":
         return OpenRouterProvider(model=model or "anthropic/claude-3.5-sonnet")
     else:
-        logger.warning(f"Unknown LLM_PROVIDER '{provider_type}', falling back to Gemini")
-        return GeminiProvider()
+        logger.warning(f"Unknown LLM_PROVIDER '{provider_type}', falling back to OpenRouter (Claude)")
+        return OpenRouterProvider()

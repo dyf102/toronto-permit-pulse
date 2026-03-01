@@ -4,9 +4,10 @@ Handles 429 RESOURCE_EXHAUSTED errors by extracting the retry delay
 from the error response and waiting accordingly.
 """
 import re
+import os
 import time
 import logging
-from typing import Callable, TypeVar
+from typing import Callable, TypeVar, Optional
 
 logger = logging.getLogger(__name__)
 T = TypeVar("T")
@@ -18,7 +19,7 @@ MAX_DELAY = 60.0        # cap at 60s
 BACKOFF_FACTOR = 2.0
 
 
-def _parse_retry_delay(error_message: str) -> float | None:
+def _parse_retry_delay(error_message: str) -> Optional[float]:
     """
     Extract the retry delay from a Gemini 429 error.
     Looks for patterns like 'retryDelay': '1s' or 'Please retry in 15.01s'
@@ -41,24 +42,15 @@ def retry_gemini_call(
     max_retries: int = MAX_RETRIES,
     base_delay: float = BASE_DELAY,
     max_delay: float = MAX_DELAY,
-    on_retry: Callable[[int, float, str], None] | None = None,
+    on_retry: Optional[Callable[[int, float, str], None]] = None,
 ) -> T:
     """
     Execute a Gemini API call with automatic retry on 429 errors.
-
-    Args:
-        fn: Zero-argument callable that makes the API call
-        max_retries: Maximum number of retries (default 5)
-        base_delay: Base delay in seconds for exponential backoff
-        max_delay: Maximum delay cap in seconds
-        on_retry: Optional callback(attempt, delay, reason) for logging/progress
-
-    Returns:
-        The result of fn()
-
-    Raises:
-        The original exception if all retries are exhausted
+    In development mode, retries are disabled to fail fast.
     """
+    if os.getenv("ENVIRONMENT") == "development":
+        return fn()
+
     last_exception = None
 
     for attempt in range(max_retries + 1):

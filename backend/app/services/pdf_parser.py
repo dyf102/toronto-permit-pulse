@@ -66,22 +66,30 @@ Return only the JSON array:"""
         if os.getenv("ENVIRONMENT") == "development":
             logger.debug(f"[parser] RESPONSE:\n{content[:1000]}...")
 
-        # Strip any accidental markdown fences
-        if content.startswith("```"):
-            content = content.split("\n", 1)[1].rsplit("```", 1)[0].strip()
-
-        # Sometimes the model wraps in an object, unwrap it
-        if content.startswith("{"):
-            try:
-                obj = json.loads(content)
-                if "items" in obj:
-                    content = json.dumps(obj["items"])
-            except Exception:
-                pass
-
+        # More robust JSON extraction
         try:
-            items_data = json.loads(content)
+            # Try to find a JSON list first
+            json_start = content.find('[')
+            json_end = content.rfind(']') + 1
+            if json_start != -1 and json_end > json_start:
+                content_to_parse = content[json_start:json_end]
+            else:
+                # If no list found, maybe it's an object with an "items" key
+                json_start = content.find('{')
+                json_end = content.rfind('}') + 1
+                if json_start != -1 and json_end > json_start:
+                    content_to_parse = content[json_start:json_end]
+                else:
+                    content_to_parse = content
+
+            items_data = json.loads(content_to_parse)
+            
+            # If it's an object, try to unwrap "items" list
+            if isinstance(items_data, dict) and "items" in items_data:
+                items_data = items_data["items"]
+                
             if not isinstance(items_data, list):
+                logger.warning(f"[parser] Expected list but got {type(items_data)}")
                 items_data = []
         except json.JSONDecodeError:
             print(f"[parser] JSON decode failed. Raw response:\n{content[:500]}")

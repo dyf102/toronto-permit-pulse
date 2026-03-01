@@ -91,11 +91,13 @@ Respond ONLY with a valid JSON object (no markdown fences) containing:
 
         content = self._generate(prompt, on_retry=on_retry)
 
-        # Strip any accidental markdown fences
-        if content.startswith("```"):
-            content = content.split("\n", 1)[1].rsplit("```", 1)[0].strip()
-
+        # More robust JSON extraction
         try:
+            json_start = content.find('{')
+            json_end = content.rfind('}') + 1
+            if json_start != -1 and json_end > json_start:
+                content = content[json_start:json_end]
+            
             parsed = json.loads(content)
         except json.JSONDecodeError:
             parsed = {
@@ -208,17 +210,16 @@ class LandscapingValidatorAgent(BaseValidatorAgent):
     categories = [DeficiencyCategory.LANDSCAPING]
 
     def __init__(self):
-        super().__init__(model="gemini-2.5-flash")
+        super().__init__()
 
-    system_prompt = """You are a specialist in Toronto's landscaping requirements for Garden and Laneway Suites.
+    system_prompt = """You are a specialist in Toronto's landscaping requirements for Garden and Laneway Suites under By-law 569-2013.
 
-Your expertise includes:
-- Soft landscaping minimum percentages
-- Permeable surface requirements
-- Grading and drainage requirements
-- Fencing and screening requirements
+Your expertise must strictly enforce these rules:
+- Laneway Suites (>6m frontage): At least 85% of the area between the rear main wall of the residence and the front main wall of the laneway suite MUST be soft landscaping (excluding a permitted walkway up to 1.5m wide).
+- Laneway Suites (<=6m frontage): At least 60% of the same area MUST be soft landscaping.
+- Garden Suites: At least 50% of the rear yard MUST remain permeable soft landscaping.
 
-When drafting responses, cite By-law 569-2013 landscaping provisions and any applicable site plan requirements."""
+When drafting responses, explicitly state the required percentage based on the suite type and lot frontage, cite the applicable By-law 569-2013 section, and calculate whether the proposed soft landscaping meets the requirement."""
 
 
 class ServicingValidatorAgent(BaseValidatorAgent):
@@ -226,14 +227,12 @@ class ServicingValidatorAgent(BaseValidatorAgent):
     categories = [DeficiencyCategory.SERVICING]
     system_prompt = """You are a specialist in municipal servicing requirements for Garden and Laneway Suites in Toronto.
 
-Your expertise includes:
-- Water and sewer connection requirements
-- Toronto Water connection permits
-- Stormwater management
-- Grading and drainage to municipal standards
-- Utility easements and right-of-way requirements
+Your expertise must strictly enforce these rules:
+- Verify routing for water, sanitary, storm, hydro, and gas connections to the suite.
+- Enforce the OBC plumbing separation rule (7.1.2.4(2)): Plumbing serving a dwelling unit shall not be installed in or under another unit unless the piping is located in a tunnel, pipe corridor, common basement, or parking garage and is accessible for servicing. Flag this if plumbing for the suite is connected to the services of the main building improperly.
+- Recommend confirming lateral upgrades or sump connection strategies with the City where applicable.
 
-When drafting responses, cite relevant Toronto Water and Engineering standards."""
+When drafting responses, cite relevant Toronto Water and Engineering standards and specifically OBC 7.1.2.4(2) if shared plumbing is detected."""
 
 
 # ---------------------------------------------------------------------------
