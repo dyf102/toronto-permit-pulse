@@ -7,7 +7,7 @@ import re
 import os
 import time
 import logging
-from typing import Callable, TypeVar, Optional
+from typing import Callable, TypeVar
 
 logger = logging.getLogger(__name__)
 T = TypeVar("T")
@@ -19,7 +19,7 @@ MAX_DELAY = 60.0        # cap at 60s
 BACKOFF_FACTOR = 2.0
 
 
-def _parse_retry_delay(error_message: str) -> Optional[float]:
+def _parse_retry_delay(error_message: str) -> float | None:
     """
     Extract the retry delay from a Gemini 429 error.
     Looks for patterns like 'retryDelay': '1s' or 'Please retry in 15.01s'
@@ -42,7 +42,7 @@ def retry_gemini_call(
     max_retries: int = MAX_RETRIES,
     base_delay: float = BASE_DELAY,
     max_delay: float = MAX_DELAY,
-    on_retry: Optional[Callable[[int, float, str], None]] = None,
+    on_retry: Callable[[int, float, str], None] | None = None,
 ) -> T:
     """
     Execute a Gemini API call with automatic retry on 429 errors.

@@ -145,3 +145,4 @@ vite.config.ts.timestamp-*
 .prd.env
 .env
 \n# OS files\n.DS_Store\n**/.DS_Store
+backend/venv311/

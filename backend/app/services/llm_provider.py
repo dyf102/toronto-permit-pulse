@@ -1,7 +1,7 @@
 import os
 import logging
 from abc import ABC, abstractmethod
-from typing import List, Optional, Callable, Any
+from typing import Callable, Any
 from google import genai
 from google.genai import types as genai_types
 from openai import OpenAI
@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 
 class LLMProvider(ABC):
     @abstractmethod
-    def generate_content(self, prompt: str, system_prompt: str = "", on_retry: Optional[Callable] = None) -> str:
+    def generate_content(self, prompt: str, system_prompt: str = "", on_retry: Callable[[int, float, str], None] | None = None) -> str:
         pass
 
 class GeminiProvider(LLMProvider):
@@ -34,7 +34,7 @@ class GeminiProvider(LLMProvider):
         else:
             self.client = genai.Client(api_key=api_key) if api_key else None
 
-    def generate_content(self, prompt: str, system_prompt: str = "", on_retry: Optional[Callable] = None) -> str:
+    def generate_content(self, prompt: str, system_prompt: str = "", on_retry: Callable[[int, float, str], None] | None = None) -> str:
         if not self.client:
             raise RuntimeError("GOOGLE_API_KEY not set for GeminiProvider")
 
@@ -64,7 +64,7 @@ class OpenRouterProvider(LLMProvider):
             api_key=api_key,
         ) if api_key else None
 
-    def generate_content(self, prompt: str, system_prompt: str = "", on_retry: Optional[Callable] = None) -> str:
+    def generate_content(self, prompt: str, system_prompt: str = "", on_retry: Callable[[int, float, str], None] | None = None) -> str:
         if not self.client:
             raise RuntimeError("OPENROUTER_API_KEY not set for OpenRouterProvider")
 

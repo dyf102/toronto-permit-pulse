@@ -1,17 +1,7 @@
-"""
-Base agent interface and specialized validator agents.
-Each agent checks a deficiency against a specific regulatory domain
-and produces a structured response with citations.
-"""
-import os
-import json
-from typing import List, Optional
-from abc import ABC, abstractmethod
-
 import os
 import json
 import logging
-from typing import List, Optional
+from typing import Callable
 from abc import ABC, abstractmethod
 
 from pydantic import BaseModel
@@ -30,14 +20,14 @@ logger = logging.getLogger(__name__)
 class BaseValidatorAgent(ABC):
     """Base class for all specialized validator agents."""
 
-    def __init__(self, model: Optional[str] = None):
+    def __init__(self, model: str | None = None):
         self._provider = get_llm_provider()
         if model:
              # Override if specific model requested
              os.environ["LLM_MODEL"] = model
              self._provider = get_llm_provider()
 
-    def _generate(self, prompt: str, on_retry: Optional[Callable] = None) -> str:
+    def _generate(self, prompt: str, on_retry: Callable[[int, float, str], None] | None = None) -> str:
         if os.getenv("ENVIRONMENT") == "development":
             logger.debug(f"[{self.agent_name}] PROMPT:\n{prompt}")
         
@@ -59,7 +49,7 @@ class BaseValidatorAgent(ABC):
 
     @property
     @abstractmethod
-    def categories(self) -> List[DeficiencyCategory]:
+    def categories(self) -> list[DeficiencyCategory]:
         """Which deficiency categories this agent handles."""
         ...
 
@@ -71,7 +61,7 @@ class BaseValidatorAgent(ABC):
     def can_handle(self, item: DeficiencyItem) -> bool:
         return item.category in self.categories
 
-    def validate(self, item: DeficiencyItem, retrieved_context: str = "", on_retry: Optional[Callable] = None) -> GeneratedResponse:
+    def validate(self, item: DeficiencyItem, retrieved_context: str = "", on_retry: Callable[[int, float, str], None] | None = None) -> GeneratedResponse:
         context_block = f"\n**Relevant By-law/Code Context:**\n{retrieved_context}\n" if retrieved_context else ""
         
         prompt = f"""Analyze the following deficiency from an Examiner's Notice and draft a correction response.

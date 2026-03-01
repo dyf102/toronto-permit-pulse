@@ -1,5 +1,4 @@
 from enum import Enum
-from typing import List, Optional
 from datetime import datetime
 from uuid import UUID, uuid4
 from pydantic import BaseModel, Field
@@ -39,35 +38,35 @@ class PermitSession(BaseModel):
     status: SessionStatus = SessionStatus.INTAKE
     property_address: str
     suite_type: SuiteType
-    bylaw_context: Optional[str] = None
+    bylaw_context: str | None = None
     is_former_municipal_zoning: bool = False
-    laneway_abutment_length: Optional[float] = None
-    pre_approved_plan_number: Optional[str] = None
+    laneway_abutment_length: float | None = None
+    pre_approved_plan_number: str | None = None
     created_at: datetime = Field(default_factory=datetime.utcnow)
-    completed_at: Optional[datetime] = None
+    completed_at: datetime | None = None
 
 class DeficiencyItem(BaseModel):
     id: UUID = Field(default_factory=uuid4)
-    session_id: Optional[UUID] = None
+    session_id: UUID | None = None
     category: DeficiencyCategory
     raw_notice_text: str
     extracted_action: str
     agent_confidence: float = Field(default=0.8, ge=0.0, le=1.0)
-    order_index: Optional[int] = None
+    order_index: int | None = None
 
 class Citation(BaseModel):
     bylaw: str
     section: str
     version: str
-    effective_date: Optional[str] = None
+    effective_date: str | None = None
 
 class GeneratedResponse(BaseModel):
     id: UUID = Field(default_factory=uuid4)
     deficiency_id: UUID
     draft_text: str
-    citations: List[Citation] = []
+    citations: list[Citation] = []
     resolution_status: ResolutionStatus
-    variance_magnitude: Optional[str] = None
+    variance_magnitude: str | None = None
     agent_reasoning: str
 
 class ClarificationExchange(BaseModel):
@@ -75,10 +74,10 @@ class ClarificationExchange(BaseModel):
     session_id: UUID
     agent_name: str
     question_text: str
-    user_response: Optional[str] = None
+    user_response: str | None = None
     asked_at: datetime = Field(default_factory=datetime.utcnow)
-    answered_at: Optional[datetime] = None
+    answered_at: datetime | None = None
 
 class ExaminerNoticeExtractionResult(BaseModel):
     """Structured output expected from the Claude model when parsing notice."""
-    items: List[DeficiencyItem]
+    items: list[DeficiencyItem]

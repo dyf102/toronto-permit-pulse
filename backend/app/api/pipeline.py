@@ -37,6 +37,7 @@ async def run_full_pipeline(
     suite_type: str = Form(...),
     file: UploadFile = File(...),
     laneway_abutment_length: float = Form(None),
+    is_former_municipal_zoning: bool = Form(False),
     recaptcha_verified: bool = Depends(verify_recaptcha),
     db: AsyncSession = Depends(get_db),
 ):
@@ -48,7 +49,7 @@ async def run_full_pipeline(
     await validate_file(file)
 
     # Log start
-    logger.info(f"Starting pipeline for address: {property_address}")
+    logger.info(f"Starting pipeline for address: {property_address} (Legacy: {is_former_municipal_zoning})")
 
     try:
         st = SuiteType(suite_type.upper())
@@ -71,6 +72,7 @@ async def run_full_pipeline(
         property_address=property_address,
         suite_type=st,
         laneway_abutment_length=laneway_abutment_length,
+        is_former_municipal_zoning=is_former_municipal_zoning,
     )
 
     with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
@@ -90,6 +92,7 @@ async def run_full_pipeline(
             property_address=session.property_address,
             suite_type=session.suite_type,
             laneway_abutment_length=session.laneway_abutment_length,
+            is_former_municipal_zoning=session.is_former_municipal_zoning,
             status=session.status,
         )
         
@@ -137,6 +140,7 @@ async def stream_pipeline(
     suite_type: str = Form(...),
     file: UploadFile = File(...),
     laneway_abutment_length: float = Form(None),
+    is_former_municipal_zoning: bool = Form(False),
     recaptcha_verified: bool = Depends(verify_recaptcha),
     db: AsyncSession = Depends(get_db),
 ):
@@ -206,6 +210,7 @@ async def stream_pipeline(
                 property_address=property_address,
                 suite_type=st,
                 laneway_abutment_length=laneway_abutment_length,
+                is_former_municipal_zoning=is_former_municipal_zoning,
             )
             session.status = SessionStatus.PARSING
 
@@ -224,6 +229,7 @@ async def stream_pipeline(
                 property_address=session.property_address,
                 suite_type=session.suite_type,
                 laneway_abutment_length=session.laneway_abutment_length,
+                is_former_municipal_zoning=session.is_former_municipal_zoning,
                 status=session.status,
             )
             

@@ -2,7 +2,6 @@
 Orchestrator that coordinates the full pipeline:
   Parse → Route → Validate → Draft → Package
 """
-from typing import List, Dict
 from uuid import UUID
 from sqlalchemy.ext.asyncio import AsyncSession
 import os
@@ -26,17 +25,16 @@ class OrchestratorService:
     """
 
     async def process_deficiencies(
-        self, session: PermitSession, items: List[DeficiencyItem], db: AsyncSession
-    ) -> Dict:
+        self, session: PermitSession, items: list[DeficiencyItem], db: AsyncSession
+    ) -> dict:
         """
         Process all deficiency items through the agent pipeline asynchronously.
         Returns structured results grouped by category.
         """
-        results: List[Dict] = []
-        unhandled: List[Dict] = []
+        results: list[dict] = []
+        unhandled: list[dict] = []
         
-        api_key = os.getenv("GOOGLE_API_KEY", "")
-        kb_service = KnowledgeBaseService(api_key) if api_key else None
+        kb_service = KnowledgeBaseService()
         
         loop = asyncio.get_event_loop()
 

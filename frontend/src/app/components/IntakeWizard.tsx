@@ -43,16 +43,39 @@ export default function IntakeWizard({ onPipelineComplete }: IntakeWizardProps) 
     const recaptchaRef = useRef<ReCAPTCHA>(null);
     const [recaptchaToken, setRecaptchaToken] = useState<string | null>(null);
 
-    const legacyMunicipalities = [
-        "etobicoke",
-        "north york",
-        "scarborough",
-        "york",
-        "east york",
-    ];
-    const isLegacy = legacyMunicipalities.some((m) =>
-        address.toLowerCase().includes(m)
-    );
+    // Legacy and Exclusion Zone Detection Logic
+    const isLegacy = (() => {
+        const addr = address.toLowerCase();
+        
+        // 1. Keyword-based (Former Municipalities)
+        const legacyKeywords = ["etobicoke", "north york", "scarborough", "york", "east york"];
+        if (legacyKeywords.some(k => addr.includes(k))) return true;
+
+        // 2. Postal Code-based (High-confidence matches for Annex/Yorkville/Rosedale)
+        // M5R (Annex), M5S (University/Annex), M4W (Rosedale)
+        const exclusionPostalCodes = ["m5r", "m5s", "m4w"];
+        if (exclusionPostalCodes.some(pc => addr.includes(pc))) return true;
+
+        // 3. Neighborhood/Boundary Keywords for Laneway Exclusions
+        const exclusionAreas = [
+            "annex", "yorkville", "rosedale", "summerhill", 
+            "waterfront", "railway lands", "liberty village", "the beach"
+        ];
+        if (suiteType === "LANEWAY" && exclusionAreas.some(area => addr.includes(area))) return true;
+
+        return false;
+    })();
+
+    const getWarningMessage = () => {
+        const addr = address.toLowerCase();
+        if (suiteType === "LANEWAY" && (addr.includes("annex") || addr.includes("yorkville") || addr.includes("m5r") || addr.includes("m5s"))) {
+            return "This property is within the Annex/Yorkville Laneway Exclusion Zone. It remains governed by former City of Toronto By-law 438-86.";
+        }
+        if (addr.includes("waterfront") || addr.includes("railway lands")) {
+            return "Properties in the Waterfront/Railway Lands often have site-specific legacy zoning not covered by the standard ARU by-laws.";
+        }
+        return "This property may fall under a former municipal zoning by-law that is not supported by our automated compliance MVP.";
+    };
 
     const nextStep = () => {
         if (step === 1 && isLegacy) return;
@@ -89,6 +112,7 @@ export default function IntakeWizard({ onPipelineComplete }: IntakeWizardProps) 
             formData.append("file", uploadFile);
             formData.append("property_address", address);
             formData.append("suite_type", suiteType);
+            formData.append("is_former_municipal_zoning", isLegacy.toString());
             if (lanewayAbutment) {
                 formData.append("laneway_abutment_length", lanewayAbutment);
             }
@@ -252,9 +276,15 @@ export default function IntakeWizard({ onPipelineComplete }: IntakeWizardProps) 
                                         Manual Validation Required
                                     </h4>
                                     <p className="text-orange-700 dark:text-orange-400 text-sm mt-1">
-                                        This property falls under a former municipal zoning by-law
-                                        that is not supported by our automated compliance MVP.
-                                        Please contact Toronto Building at{" "}
+                                        {getWarningMessage()} Please verify on the{" "}
+                                        <a 
+                                            href="https://www.toronto.ca/city-government/planning-development/zoning-by-law-preliminary-zoning-reviews/zoning-by-law-569-2013-interactive-map/" 
+                                            target="_blank" 
+                                            rel="noopener noreferrer"
+                                            className="underline font-bold"
+                                        >
+                                            City's Interactive Zoning Map
+                                        </a> (Legacy properties are uncolored/grey) or contact Toronto Building at{" "}
                                         <strong>416-397-5330</strong>.
                                     </p>
                                 </div>
