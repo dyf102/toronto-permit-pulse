@@ -18,7 +18,21 @@ class GeminiProvider(LLMProvider):
     def __init__(self, model: str = "gemini-3-flash-preview"):
         self.model = model
         api_key = os.getenv("GOOGLE_API_KEY", "")
-        self.client = genai.Client(api_key=api_key) if api_key else None
+        project_id = os.getenv("GOOGLE_CLOUD_PROJECT", "")
+        
+        # Partner models like Claude 4.6 on Vertex AI require project_id and vertexai=True
+        # Native Gemini models should use API_KEY only (or ADC)
+        if "claude" in model.lower():
+            if not project_id:
+                raise RuntimeError(f"GOOGLE_CLOUD_PROJECT must be set to use partner model: {model}")
+            
+            self.client = genai.Client(
+                project=project_id,
+                location="us-east5", # Default location for Claude on Vertex
+                vertexai=True
+            )
+        else:
+            self.client = genai.Client(api_key=api_key) if api_key else None
 
     def generate_content(self, prompt: str, system_prompt: str = "", on_retry: Optional[Callable] = None) -> str:
         if not self.client:
@@ -78,15 +92,14 @@ class OpenRouterProvider(LLMProvider):
         return ""
 
 def get_llm_provider() -> LLMProvider:
-    provider_type = os.getenv("LLM_PROVIDER", "openrouter").lower()
+    provider_type = os.getenv("LLM_PROVIDER", "gemini").lower()
     model = os.getenv("LLM_MODEL")
 
     if provider_type == "gemini":
-        if model == "gemini-3.1-pro-preview":
-            return GeminiProvider(model=model)
+        # Supports native Gemini and Vertex partner models like claude-opus-4-6
         return GeminiProvider(model=model or "gemini-3-flash-preview")
     elif provider_type == "openrouter":
         return OpenRouterProvider(model=model or "anthropic/claude-3.5-sonnet")
     else:
-        logger.warning(f"Unknown LLM_PROVIDER '{provider_type}', falling back to OpenRouter (Claude)")
-        return OpenRouterProvider()
+        logger.warning(f"Unknown LLM_PROVIDER '{provider_type}', falling back to Gemini")
+        return GeminiProvider()

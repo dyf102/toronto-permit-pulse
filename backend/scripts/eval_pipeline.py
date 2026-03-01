@@ -7,9 +7,9 @@ from dotenv import load_dotenv
 # Ensure we load environment variables
 load_dotenv()
 
-# We default to gemini if not specified
-provider = os.getenv("LLM_PROVIDER", "gemini").lower()
-model = os.getenv("LLM_MODEL", "gemini-3.1-pro-preview") # Use Gemini 3.1 Pro for high-quality grading
+# Set provider to gemini and model to gemini-3-flash-preview
+os.environ["LLM_PROVIDER"] = "gemini"
+os.environ["LLM_MODEL"] = "gemini-3-flash-preview"
 
 from app.services.llm_provider import get_llm_provider
 
@@ -126,6 +126,65 @@ def run_sample_evals():
     print("\n--- Running Evaluation on BAD Response ---")
     bad_result = evaluator.evaluate_response(mock_deficiency, mock_bad_response, mock_gold_citations)
     print(json.dumps(bad_result, indent=2))
+
+def run_interactive_eval():
+    """Interactive loop for running evaluations."""
+    evaluator = EvalPipeline()
+    
+    print("\n" + "="*60)
+    print("🏢 TORONTO PERMIT EVALUATION PIPELINE (P.ENG. INTERACTIVE)")
+    print("="*60)
+    print(f"Model: {os.getenv('LLM_MODEL', 'gemini-3.1-pro-preview')}")
+    print(f"Provider: {os.getenv('LLM_PROVIDER', 'gemini')}")
+    print("-"*60)
+
+    while True:
+        print("\n[1] Enter new deficiency for evaluation")
+        print("[2] Run mock test (Sanity check)")
+        print("[q] Quit")
+        
+        choice = input("\nSelect an option: ").strip().lower()
+        
+        if choice == 'q':
+            break
+        
+        if choice == '2':
+            run_sample_evals()
+            continue
+            
+        if choice == '1':
+            print("\n--- STEP 1: DEFICIENCY ---")
+            original_deficiency = input("Enter the Examiner's deficiency text: ").strip()
+            
+            print("\n--- STEP 2: GOLD STANDARD ---")
+            gold_standard = input("Enter expected citations (comma separated, e.g. 150.8.60.1, 9.10.20.3): ").strip()
+            gold_standard_list = [c.strip() for c in gold_standard.split(",")]
+            
+            print("\n--- STEP 3: AI RESPONSE TO GRADE ---")
+            draft_text = input("Enter the AI's draft response text: ").strip()
+            provided_citations = input("Enter citations provided by AI (comma separated): ").strip()
+            
+            # Format the response for the evaluator
+            generated_response = {
+                "draft_text": draft_text,
+                "resolution_status": "MANUAL_ENTRY",
+                "citations": [{"section": c.strip()} for c in provided_citations.split(",")],
+                "agent_reasoning": "Manually entered for interactive evaluation."
+            }
+            
+            print("\n" + "-"*30)
+            print("🚀 Sending to P.Eng. Evaluator...")
+            result = evaluator.evaluate_response(original_deficiency, generated_response, gold_standard_list)
+            
+            print("\n" + "="*30)
+            print("📊 EVALUATION RESULT")
+            print("="*30)
+            print(f"Citation Accuracy: {result.get('citation_accuracy')}/10")
+            print(f"Completeness:      {result.get('completeness')}/10")
+            print(f"Professional Tone: {result.get('professional_tone')}/10")
+            print(f"OVERALL PASS:      {'✅ YES' if result.get('overall_pass') else '❌ NO'}")
+            print(f"\nFEEDBACK:\n{result.get('feedback')}")
+            print("="*60)
 
 if __name__ == "__main__":
     run_sample_evals()
